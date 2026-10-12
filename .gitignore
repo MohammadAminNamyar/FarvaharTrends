@@ -1,0 +1,102 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Widget Preview related
+.widget_preview/
+# Local toolchains and pilot signing material stay on this machine.
+.tooling/
+.signing/
+distribution/
+artifacts/
+
+# Local cleanup archive and machine-only validation notes.
+/.local-only/
+/docs/BUILD-VALIDATION.md
+/tools/build-release-[0-9]*.ps1
+/tools/final-device-check-*.ps1
+/tools/capture-*-evidence.ps1
+/tools/inspect-wifi-direct.ps1
+/tools/package-pilot.ps1
+/tools/emulator-ui.ps1
+**/GENERATED-ASSET.txt
+
+# Generated outputs and caches in the app and vendored plugins.
+**/build/
+**/.dart_tool/
+**/.gradle/
+**/.kotlin/
+**/.cxx/
+**/coverage/
+**/__pycache__/
+*.apk
+*.aab
+*.apks
+*.ipa
+*.zip
+
+# Credentials, signing material and machine configuration.
+.env
+.env.*
+!.env.example
+**/key.properties
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.key
+*.pem
+/android/local.properties
+.vscode/
+
+# Assistant workspaces and local instructions; application source stays tracked.
+**/.codex/
+**/.agents/
+**/.claude/
+**/.cursor/
+**/AGENTS.md
+**/CLAUDE.md
+**/GEMINI.md
+.aider*

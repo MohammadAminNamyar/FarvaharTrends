@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- Notification icons use only alpha. The tower arch and upper window
+       stay transparent; the two wing/chevron tiers echo the PersianTrend mark. -->
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:fillType="evenOdd"
+      android:pathData="M8.7,3.3Q12,4.5 15.3,3.3L15.3,9.4Q15.5,12.2 17.5,15.7L14.4,17.5Q13.8,13.7 12,11.9Q10.2,13.7 9.6,17.5L6.5,15.7Q8.5,12.2 8.7,9.4Z M10.2,5.2L13.8,5.2L13.8,6.8Q12,7.6 10.2,6.8Z" />
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M1.4,7.5L7.7,11.2L7.1,13.2L2.7,10.6Z M22.6,7.5L16.3,11.2L16.9,13.2L21.3,10.6Z M2.5,12.6L12,18.2L21.5,12.6L20.1,16.6L12,21.4L3.9,16.6Z" />
+</vector>

@@ -1,0 +1,2 @@
+# Reproducible physical Windows Bluetooth helper, installed inside .tooling.
+bleak==3.0.2

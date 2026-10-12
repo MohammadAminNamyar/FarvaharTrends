@@ -1,0 +1,105 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
+
+class PilotPlatform {
+  static const _channel = MethodChannel('persiantrend/device');
+  static final _transportEvents =
+      StreamController<Map<String, dynamic>>.broadcast();
+  static bool _listening = false;
+  static Future<String> acquireIdentityLease() async {
+    final token = await _channel.invokeMethod<String>('acquireIdentityLease');
+    if (token == null || token.isEmpty) {
+      throw StateError('Identity storage could not be locked.');
+    }
+    return token;
+  }
+
+  static Future<void> releaseIdentityLease(String token) =>
+      _channel.invokeMethod('releaseIdentityLease', {'token': token});
+
+  /// Nearby-only IP transport. Native code pins each socket to a real local
+  /// Wi-Fi link; these APIs never fall back to the device's default network.
+  static Future<void> startLocalWifi({
+    required int tcpPort,
+    required int ingressPort,
+    required int wifiDirectIngressPort,
+    required Uint8List signedBeacon,
+    int discoveryPort = 45872,
+  }) => _channel.invokeMethod('startLocalWifi', {
+    'tcpPort': tcpPort,
+    'ingressPort': ingressPort,
+    'wifiDirectIngressPort': wifiDirectIngressPort,
+    'signedBeacon': signedBeacon,
+    'discoveryPort': discoveryPort,
+  });
+  static Future<void> updateLocalWifiBeacon(Uint8List signedBeacon) => _channel
+      .invokeMethod('updateLocalWifiBeacon', {'signedBeacon': signedBeacon});
+  static Future<void> probeLocalWifi(String host, {int port = 45872}) =>
+      _channel.invokeMethod('probeLocalWifi', {'host': host, 'port': port});
+  static Future<Map<String, dynamic>> openLocalWifiPeer({
+    required String host,
+    required int port,
+  }) async => Map<String, dynamic>.from(
+    await _channel.invokeMapMethod<String, dynamic>('openLocalWifiPeer', {
+          'host': host,
+          'port': port,
+        }) ??
+        (throw StateError('Local Wi-Fi peer is unavailable.')),
+  );
+  static Future<void> stopLocalWifi() => _channel.invokeMethod('stopLocalWifi');
+
+  static Stream<Map<String, dynamic>> get transportEvents {
+    if (!_listening) {
+      _listening = true;
+      _channel.setMethodCallHandler((call) async {
+        if (call.method == 'transportEvent' && call.arguments is Map) {
+          _transportEvents.add(
+            Map<String, dynamic>.from(call.arguments as Map),
+          );
+        }
+      });
+    }
+    return _transportEvents.stream;
+  }
+
+  static Future<void> requestNearbyPermissions() =>
+      _channel.invokeMethod('requestNearbyPermissions');
+  static Future<void> enableBluetooth() =>
+      _channel.invokeMethod('enableBluetooth');
+  static Future<void> startNearby({
+    required String identityId,
+    required Uint8List signedBeacon,
+    required int tcpPort,
+    required int bluetoothIngressPort,
+  }) => _channel.invokeMethod('startNearby', {
+    'identityId': identityId,
+    'signedBeacon': signedBeacon,
+    'tcpPort': tcpPort,
+    'bluetoothIngressPort': bluetoothIngressPort,
+  });
+  static Future<void> updateNearbyBeacon(Uint8List beacon) =>
+      _channel.invokeMethod('updateNearbyBeacon', {'signedBeacon': beacon});
+  static Future<void> refreshNearby() => _channel.invokeMethod('refreshNearby');
+  static Future<void> allowWifiDirect(bool allowed) =>
+      _channel.invokeMethod('allowWifiDirect', {'allowed': allowed});
+  static Future<void> stopNearby() => _channel.invokeMethod('stopNearby');
+  static Future<void> admitBluetooth(String routeId, bool accepted) =>
+      _channel.invokeMethod('admitBluetooth', {
+        'routeId': routeId,
+        'accepted': accepted,
+      });
+  static Future<Map<String, dynamic>> state() async =>
+      Map<String, dynamic>.from(
+        await _channel.invokeMapMethod<String, dynamic>('state') ?? {},
+      );
+  static Future<void> requestNotifications() =>
+      _channel.invokeMethod('requestNotifications');
+  static Future<void> batterySettings() =>
+      _channel.invokeMethod('batterySettings');
+  static Future<void> setDiscoveryActive(bool active) =>
+      _channel.invokeMethod('setDiscoveryActive', {'active': active});
+  static Future<bool> exportReport(String report) async =>
+      await _channel.invokeMethod<bool>('exportReport', {'report': report}) ??
+      false;
+}
