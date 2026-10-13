@@ -56,6 +56,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
   private WiFiDirectTransport wifiDirect;
   private BleTransportBridge bluetooth;
   private LocalWifiTransport localWifi;
+  private GatewayPortLease gatewayLease;
   private static final Set<PilotPlatformPlugin> INSTANCES = new HashSet<>();
   private static final Set<Activity> RESUMED = new HashSet<>();
   private static boolean lifecycleRegistered;
@@ -91,6 +92,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     ((NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE)).createNotificationChannel(receiving);
   }
   @Override public void onDetachedFromEngine(FlutterPluginBinding binding) {
+    if (gatewayLease != null) { gatewayLease.close(); gatewayLease = null; }
     Object detachedOwner = identityLeaseOwner;
     identityLeaseOwner = null;
     if (Looper.myLooper() == Looper.getMainLooper()) IDENTITY_LEASES.detach(detachedOwner);
@@ -130,6 +132,20 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     }
     try {
       switch (call.method) {
+        case "refreshPhoneHelper": {
+          Object port = call.argument("port");
+          if (!(port instanceof Integer) || (Integer)port < 1 || (Integer)port > 65535) {
+            result.error("invalid_helper_port", "Invalid helper port", null); return;
+          }
+          if (gatewayLease == null) gatewayLease = new GatewayPortLease(context);
+          gatewayLease.refresh((Integer)port, result::success);
+          return;
+        }
+        case "releasePhoneHelper": {
+          if (gatewayLease == null) result.success(null);
+          else gatewayLease.release(result::success);
+          return;
+        }
         case "acquireIdentityLease":
           if (identityLeaseOwner == null) {
             result.error("identity_lease_detached", "Identity service is unavailable", null); return;
@@ -321,6 +337,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     data.put("model", Build.MODEL);
     data.put("osVersion", Build.VERSION.RELEASE);
     data.put("sdk", Build.VERSION.SDK_INT);
+    data.put("packageName", context.getPackageName());
     data.put("targetSdk", context.getApplicationInfo().targetSdkVersion);
     data.put("wallTimeMs", System.currentTimeMillis());
     data.put("elapsedRealtimeMs", SystemClock.elapsedRealtime());

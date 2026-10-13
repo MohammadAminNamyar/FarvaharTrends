@@ -13,7 +13,10 @@ class PeerContactStore {
   File get _file => File('${directory.path}/helper-contacts.json');
   Future<void> _tail = Future.value();
 
-  Future<List<PeerContact>> load() async {
+  Future<List<PeerContact>> load() => _load(false);
+  Future<List<PeerContact>> loadForReconnect() => _load(true);
+
+  Future<List<PeerContact>> _load(bool reconnect) async {
     try {
       if (!await _file.exists() || await _file.length() > maxBytes) return [];
       final raw = jsonDecode(await _file.readAsString());
@@ -27,10 +30,15 @@ class PeerContactStore {
       for (final item in raw['contacts'] as List) {
         try {
           if (item is! Map<String, dynamic>) continue;
-          final contact = PeerContact.parse(
-            item,
-            allowLoopbackForTesting: allowLoopbackForTesting,
-          );
+          final contact = reconnect
+              ? PeerContact.readCached(
+                  item,
+                  allowLoopbackForTesting: allowLoopbackForTesting,
+                )
+              : PeerContact.parse(
+                  item,
+                  allowLoopbackForTesting: allowLoopbackForTesting,
+                );
           final previous = result[contact.id];
           if (previous == null || contact.issuedAtMs > previous.issuedAtMs) {
             result[contact.id] = contact;
@@ -50,7 +58,10 @@ class PeerContactStore {
   Future<void> save(Iterable<PeerContact> contacts) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final values = contacts
-        .where((contact) => contact.expiresAtMs > now)
+        .where(
+          (contact) =>
+              contact.expiresAtMs + PeerContact.maxReconnectAgeMs > now,
+        )
         .take(maxContacts)
         .map((contact) => contact.toJson())
         .toList();

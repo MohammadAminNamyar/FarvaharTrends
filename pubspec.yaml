@@ -17,6 +17,8 @@ dependencies:
   basic_utils: 5.8.2
   pointycastle: 4.0.0
   crypto: 3.0.7
+  flutter_pear:
+    path: packages/flutter_pear
   pilot_platform:
     path: packages/pilot_platform
 

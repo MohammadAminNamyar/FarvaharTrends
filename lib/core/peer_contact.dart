@@ -13,6 +13,7 @@ class PeerContact {
 
   static const maxBytes = 4096;
   static const maxLifetimeMs = 5 * 60 * 1000;
+  static const maxReconnectAgeMs = 7 * 24 * 60 * 60 * 1000;
   static const clockSkewMs = 30 * 1000;
   final Map<String, dynamic> _value;
   final PeerCard peer;
@@ -56,6 +57,30 @@ class PeerContact {
     Map<String, dynamic> value, {
     int? nowMs,
     bool allowLoopbackForTesting = false,
+  }) => _parse(
+    value,
+    nowMs: nowMs,
+    allowLoopbackForTesting: allowLoopbackForTesting,
+  );
+
+  /// App-private reconnection only. Expired contacts must never be regossiped.
+  /// Dialing still requires the exact cached certificate to prove possession.
+  static PeerContact readCached(
+    Map<String, dynamic> value, {
+    int? nowMs,
+    bool allowLoopbackForTesting = false,
+  }) => _parse(
+    value,
+    nowMs: nowMs,
+    allowLoopbackForTesting: allowLoopbackForTesting,
+    allowExpiredForReconnect: true,
+  );
+
+  static PeerContact _parse(
+    Map<String, dynamic> value, {
+    int? nowMs,
+    bool allowLoopbackForTesting = false,
+    bool allowExpiredForReconnect = false,
   }) {
     if (utf8.encode(jsonEncode(value)).length > maxBytes ||
         value.length != 9 ||
@@ -79,7 +104,8 @@ class PeerContact {
         expires <= issued ||
         expires - issued > maxLifetimeMs ||
         issued > now + clockSkewMs ||
-        expires <= now) {
+        expires <= now &&
+            (!allowExpiredForReconnect || now - expires > maxReconnectAgeMs)) {
       throw const FormatException(
         'Helper contact expired or clock is invalid.',
       );

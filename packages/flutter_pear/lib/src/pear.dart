@@ -319,6 +319,21 @@ class Pear {
   Future<PearSwarm> join(PearKey topic, {bool announce = true, bool acceptUnannounced = false}) =>
       PearSwarm.join(_rpc, topic, announce: announce, acceptUnannounced: acceptUnannounced);
 
+  /// Public connection-route metadata, confined to this app's private cache.
+  Future<Map<String, dynamic>> networkState() async => Map<String, dynamic>.from(
+      (await _rpc.call('persiantrend.network-state')) as Map);
+
+  /// Call only after PersianTrend's pinned TLS admission has succeeded.
+  Future<void> rememberConnection(PearKey peer, PearKey topic,
+      {Map<String, dynamic>? node}) async {
+    await _rpc.call('persiantrend.remember-peer',
+        {'peer': peer.hex, 'topic': topic.hex, if (node != null) 'node': node});
+  }
+
+  Future<void> disconnect(PearKey peer) async {
+    await _rpc.call('persiantrend.disconnect', {'peer': peer.hex});
+  }
+
   /// Lets this peer reach others through its owner's relay when no direct
   /// connection is possible: both peers behind randomizing NATs, such as a
   /// device on carrier CGNAT and a phone on mobile data, which hole punching

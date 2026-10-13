@@ -24,6 +24,9 @@
 // require()d by pear-end's Node-based test suite.
 const { IPC } = typeof BareKit !== 'undefined' ? BareKit : require('./desktop-ipc')
 const Hyperswarm = require('hyperswarm')
+const DHT = require('hyperdht')
+const { BOOTSTRAP_NODES } = require('hyperdht/lib/constants')
+const { RoutingCache, validNode } = require('./persiantrend-routing')
 const Corestore = require('corestore')
 const Hyperbee = require('hyperbee')
 const Hyperdrive = require('hyperdrive')
@@ -175,9 +178,34 @@ function loadOrCreateIdentitySeed () {
   return seed
 }
 
-const swarm = new Hyperswarm(
-  Bare.argv.includes(PERSISTENT_IDENTITY_FLAG) ? { seed: loadOrCreateIdentitySeed() } : {}
-)
+// Connection identity only, separate from PersianTrend's publisher identity.
+// Cached domestic helpers are tried alongside public entry peers. Existing
+// encrypted streams do not require continued public-bootstrap availability.
+const routingCache = new RoutingCache(fs, path, STORAGE_DIR)
+const cachedRoutingNodes = routingCache.bootstrapNodes()
+const overlayDht = new DHT({
+  bootstrap: [...cachedRoutingNodes.slice(0, 8).map(node => `${node.host}:${node.port}`), ...BOOTSTRAP_NODES],
+  nodes: cachedRoutingNodes,
+  ephemeral: false,
+  maxSize: 256
+})
+const swarm = new Hyperswarm({
+  dht: overlayDht,
+  seed: loadOrCreateIdentitySeed(),
+  maxPeers: 8,
+  maxClientConnections: 8,
+  maxServerConnections: 8,
+  maxParallel: 2
+})
+const saveRouting = () => {
+  try {
+    routingCache.rememberNodes(swarm.dht.toArray({ limit: 24 }))
+    routingCache.save()
+  } catch { /* Optional caching must not break an established news stream. */ }
+}
+swarm.dht.on('ready', saveRouting)
+const routingTimer = setInterval(saveRouting, 30000)
+if (routingTimer.unref) routingTimer.unref()
 
 // Opt-in OWNER relay (Method.RELAY_SET, flutter_pear 0.4.9). Hole punching cannot
 // connect two peers that are both behind randomizing NATs: hyperdht aborts with
@@ -916,6 +944,7 @@ async function handle ({ m, p }) {
         // Absent means announce, so callers that predate the flag are unchanged. A repeat join of
         // an already-joined topic keeps its first mode (the branches below never re-join).
         swarm.join(Buffer.from(p.topic, 'hex'), { server: p.server !== false, client: true })
+        for (const key of routingCache.peerKeys(p.topic)) swarm.joinPeer(Buffer.from(key, 'hex'))
         sendState(p.topic, SwarmState.DISCOVERING)
       } else if (existing.connectedPeers.size > 0) {
         for (const peer of existing.connectedPeers) {
@@ -955,7 +984,36 @@ async function handle ({ m, p }) {
         err.code = ErrorCode.UNKNOWN_PEER
         throw err
       }
+      if (typeof p.data !== 'string' || p.data.length > 65536) throw new Error('Overlay write too large')
       message.send(Buffer.from(p.data, 'base64'))
+      return null
+    }
+    case 'persiantrend.network-state': {
+      const own = { host: swarm.dht.host, port: swarm.dht.port }
+      return {
+        cachedRoutingCount: routingCache.bootstrapNodes().length,
+        cachedPeerCount: routingCache.peers.size,
+        reachableHelper: !swarm.dht.ephemeral && !swarm.dht.firewalled && validNode(own),
+        ownContact: !swarm.dht.ephemeral && !swarm.dht.firewalled && validNode(own) ? own : null
+      }
+    }
+    case 'persiantrend.remember-peer': {
+      if (!connections.has(p.peer)) throw new Error('Peer is not connected')
+      routingCache.rememberPeer(p.peer, p.topic)
+      if (validNode(p.node)) {
+        // A routing hint carries no publisher trust. The DHT verifies reachability.
+        routingCache.rememberNodes([p.node], true)
+        swarm.dht.addNode(p.node)
+      }
+      saveRouting()
+      return null
+    }
+    case 'persiantrend.disconnect': {
+      routingCache.forgetPeer(p.peer)
+      swarm.leavePeer(Buffer.from(p.peer, 'hex'))
+      const conn = connections.get(p.peer)
+      if (conn) conn.destroy()
+      saveRouting()
       return null
     }
     // File-path bulk seam (E4.4, codex #4 LOCKED) -- see Method.BULK_WRITE_FILE's

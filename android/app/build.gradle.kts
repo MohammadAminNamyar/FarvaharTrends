@@ -17,10 +17,13 @@ android {
     }
 
     defaultConfig {
-        applicationId = "org.persiantrend.persian_trend"
+        val e2e = project.findProperty("e2eApplicationId") == "true"
+        applicationId = if (e2e) "org.persiantrend.persian_trend.e2e" else "org.persiantrend.persian_trend"
+        manifestPlaceholders["appLabel"] = if (e2e) "PersianTrend Test" else "PersianTrend"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 26
+        // The pinned Bare Kit network runtime requires Android 10 or newer.
+        minSdk = 29
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)

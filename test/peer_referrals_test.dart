@@ -119,20 +119,28 @@ void main() {
   test('A restarted reader reconnects using its learned cache with no configured seeds', () async {
     final b = create(second, 'cached-b', helper: true);
     await b.start(activeMode: false);
-    await advertise(b);
+    await advertise(b, lifetime: 3000);
     final a = create(first, 'cached-a', helper: true, seeds: [await card(b)]);
     await a.start(activeMode: false);
     final reader = create(readerKey, 'cached-reader', seeds: [await card(a)]);
     await reader.start(activeMode: false);
-    await until(() async => peers(await reader.snapshot()).contains(second.id));
+    await until(
+      () async => ((await reader.snapshot())['peers'] as List).any(
+        (peer) => peer['id'] == second.id && peer['connected'] == true,
+      ),
+    );
     await reader.stop();
     await a.stop();
+    // The public hint has expired: reconnection must use the private cached pin,
+    // and the old address must not be advertised to other phones as fresh.
+    await Future<void>.delayed(const Duration(milliseconds: 3100));
     final restarted = create(readerKey, 'cached-reader');
     await restarted.start(activeMode: false);
     await until(
       () async => (await restarted.snapshot())['connectedCount'] == 1,
     );
     expect((await restarted.snapshot())['bootstrapConfiguredCount'], 0);
+    expect((await restarted.snapshot())['helperContactCount'], 0);
     final channel = await b.createChannel(name: 'Cached route');
     await b.publishToChannel(
       channelId: channel.id,

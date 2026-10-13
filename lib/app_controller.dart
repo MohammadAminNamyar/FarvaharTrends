@@ -23,6 +23,9 @@ import 'core/models.dart';
 import 'core/peer_engine.dart';
 import 'core/service_lifecycle.dart';
 import 'nearby_transports.dart';
+import 'internet_overlay.dart';
+import 'phone_helper.dart';
+import 'testing/device_probe.dart';
 
 export 'core/identity_roles.dart' show IdentityBootstrap;
 
@@ -39,7 +42,9 @@ Future<List<PeerCard>> loadBootstrapPeers() async {
   const hasOverride = bool.hasEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
   const override = String.fromEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
   return parseBootstrapConfig(
-    hasOverride ? override : await rootBundle.loadString('assets/bootstrap.json'),
+    hasOverride
+        ? override
+        : await rootBundle.loadString('assets/bootstrap.json'),
   );
 }
 
@@ -102,6 +107,13 @@ void serviceMain(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
   PeerEngine? engine;
   NearbyTransports? nearby;
+  InternetOverlay? overlay;
+  PhoneHelper? helper;
+  Map<String, dynamic> overlayState = {'state': 'starting'};
+  final probe = DeviceProbe(readDeviceState);
+  const cacheOnlyTest =
+      DeviceProbe.enabled &&
+      bool.fromEnvironment('PERSIANTREND_E2E_CACHE_ONLY');
   Future<void> queue = Future.value();
   final initialized = Completer<void>();
   // A reopened Activity can send commands while the native service is still
@@ -117,6 +129,7 @@ void serviceMain(ServiceInstance service) async {
         switch (command['action']) {
           case 'snapshot':
             await nearby?.refresh();
+            unawaited(overlay?.refresh());
             final device = await readDeviceState();
             for (final transport in ['wifiDirect', 'bluetooth']) {
               if (device[transport] is Map) {
@@ -126,7 +139,10 @@ void serviceMain(ServiceInstance service) async {
                 });
               }
             }
-            service.invoke('status', await engine!.snapshot());
+            service.invoke('status', {
+              ...await engine!.snapshot(),
+              'overlay': overlayState,
+            });
           case 'addPeer':
             await engine!.addPeer(
               PeerCard.fromJson(
@@ -158,6 +174,12 @@ void serviceMain(ServiceInstance service) async {
           case 'stop':
             Object? stopError;
             try {
+              await helper?.stop();
+            } catch (_) {}
+            try {
+              await overlay?.stop();
+            } catch (_) {}
+            try {
               await nearby?.stop();
             } catch (_) {
               _nearbyError = 'nearby_stop_failed';
@@ -181,7 +203,10 @@ void serviceMain(ServiceInstance service) async {
             return;
         }
         if (command['action'] != 'stop') {
-          service.invoke('status', await engine!.snapshot());
+          service.invoke('status', {
+            ...await engine!.snapshot(),
+            'overlay': overlayState,
+          });
         }
         service.invoke('completed', {'requestId': command['requestId']});
       } catch (error) {
@@ -204,8 +229,15 @@ void serviceMain(ServiceInstance service) async {
           ? AndroidLocalWifiTransport()
           : null,
       bootstrapPeers: await loadBootstrapPeers(),
+      enablePeerReferrals: true,
+      acceptTcpEnrollment: true,
+      enableLanDiscovery: !cacheOnlyTest,
+      enableUdpDiscovery: !cacheOnlyTest,
       deviceState: readDeviceState,
-      onStatus: (value) => service.invoke('status', value),
+      onStatus: (value) {
+        probe.record(value);
+        service.invoke('status', {...value, 'overlay': overlayState});
+      },
     );
     await setDiscoveryActive(true);
     await engine.start(activeMode: true);
@@ -217,16 +249,40 @@ void serviceMain(ServiceInstance service) async {
         'state': state,
       }),
     );
-    await nearby.start();
+    if (!cacheOnlyTest) await nearby.start();
+    if (!engine.nearbyOnly) {
+      helper = PhoneHelper(engine);
+      await helper.start();
+      if (!cacheOnlyTest)
+        overlay = InternetOverlay(
+          engine,
+          onState: (value) {
+            overlayState = value;
+            service.invoke('overlayStatus', value);
+          },
+        );
+      await overlay?.start();
+    } else {
+      overlayState = {'state': 'disabled'};
+    }
     initialized.complete();
     service.invoke('ready', {});
-    service.invoke('status', await engine.snapshot());
+    service.invoke('status', {
+      ...await engine.snapshot(),
+      'overlay': overlayState,
+    });
   } catch (error) {
     if (!initialized.isCompleted) initialized.completeError(error);
     service.invoke('failure', {
       'message': 'Receiving service could not start: $error',
     });
     try {
+      try {
+        await helper?.stop();
+      } catch (_) {}
+      try {
+        await overlay?.stop();
+      } catch (_) {}
       try {
         await nearby?.stop();
       } catch (_) {}
@@ -339,6 +395,13 @@ class AppController extends ChangeNotifier {
               snapshot = data;
               notifyListeners();
             }
+          }),
+        );
+        _subscriptions.add(
+          _service.on('overlayStatus').listen((data) {
+            if (_disposed || data == null) return;
+            snapshot = {...snapshot, 'overlay': data};
+            notifyListeners();
           }),
         );
         _subscriptions.add(
@@ -562,7 +625,7 @@ class AppController extends ChangeNotifier {
       await _send('snapshot');
       // An optional system Bluetooth dialog must not hold IP receiving or the
       // primary UI behind its result. Native nearby refresh observes enabling.
-      unawaited(_enableBluetoothAfterReceiving());
+      if (!DeviceProbe.enabled) unawaited(_enableBluetoothAfterReceiving());
     } else {
       _local ??= _makeEngine();
       final local = _local!;

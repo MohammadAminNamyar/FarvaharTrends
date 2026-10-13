@@ -1,3 +1,2 @@
-/// The pear-end bundle version this package ships, baked in by
-/// `dart run flutter_pear:pack`. Generated -- do not edit by hand.
-const String kPearEndBundleVersion = 'b1abef64792eab4b';
+// Generated transport-source fingerprint; regenerate with tools/build-overlay.ps1.
+const String kPearEndBundleVersion = '48ac84181e1753e3';

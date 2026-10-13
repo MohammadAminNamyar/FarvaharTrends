@@ -793,7 +793,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     _callout(
       Icons.link_rounded,
       'Keep trust and reachability separate.',
-      'Use a numeric IP address. A blank address keeps the identity trusted, but your phone will not dial it. No public discovery service is used.',
+      'Manual addresses are optional. Automatic peer discovery also works across networks.',
     ),
   ];
 
@@ -2173,7 +2173,7 @@ const _diagnosticFa = <String, String>{
   'Pair your first peer': 'اولین همتای آزمایشی را اضافه کنید',
   'Exchange cards with another test phone. Check the full fingerprint together before trusting it.': 'کارت‌ها را مبادله کنید و پیش از اعتماد، همهٔ بخش‌های اثر انگشت را مقایسه کنید.',
   'Keep trust and reachability separate.': 'اعتماد و دسترسی دو چیز جدا هستند.',
-  'Use a numeric IP address. A blank address keeps the identity trusted, but your phone will not dial it. No public discovery service is used.': 'برای اتصال دستی، IP عددی وارد کنید. نشانی خالی فقط اعتماد را نگه می‌دارد و دستگاه به آن شماره‌گیری نمی‌کند.',
+  'Manual addresses are optional. Automatic peer discovery also works across networks.': 'واردکردن نشانی دستی اختیاری است. برنامه همتاها را میان شبکه‌های مختلف هم به‌طور خودکار پیدا می‌کند.',
   'Connected': 'متصل',
   'Waiting for a route': 'منتظر مسیر اتصال',
   'Update address': 'ویرایش نشانی',
@@ -2475,6 +2475,10 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
   String get state {
     if (!app.running) return 'paused';
     if (_number(app.snapshot['connectedCount']) > 0) return 'connected';
+    if (app.deliveryMode == DeliveryMode.allNetworks &&
+        app.snapshot['overlay'] is Map &&
+        (app.snapshot['overlay'] as Map)['state'] != 'unavailable')
+      return 'searching';
     return app.snapshot['discoveryState'] as String? ?? 'waitingForBootstrap';
   }
 
@@ -2715,8 +2719,8 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
           Icons.location_off_outlined,
           t('حریم خصوصی در شبکه', 'Connection privacy'),
           t(
-            'سرور مرکزی اجباری برای جمع‌آوری خبر یا انتخاب‌های شما نداریم. خبرهای عمومی میان همتاها جابه‌جا می‌شوند؛ انتخاب دنبال‌کردن و اعتماد روی این گوشی می‌ماند. کلید انتشار از کلید اتصال جداست. موقعیت GPS را نمی‌خوانیم.',
-            'There is no required central server collecting your news or choices. Public news moves between peers; follow and trust choices stay on this phone. Publishing and connections use separate keys. We do not read your GPS location.',
+            'سرور مرکزی اجباری برای جمع‌آوری خبر یا انتخاب‌های شما نداریم. خبرهای عمومی میان همتاها جابه‌جا می‌شوند؛ انتخاب دنبال‌کردن و اعتماد روی این گوشی می‌ماند. در حالت همهٔ شبکه‌ها، شبکهٔ کشف عمومی به یافتن همتاها کمک می‌کند و همتاهای آن می‌توانند اطلاعات اتصال را ببینند. کلید انتشار از کلید اتصال جداست. موقعیت GPS را نمی‌خوانیم.',
+            'There is no required central server collecting your news or choices. Public news moves between peers; follow and trust choices stay on this phone. In All networks mode, a public discovery network helps find peers and its peers can observe connection metadata. Publishing and connections use separate keys. We do not read your GPS location.',
           ),
         ),
         const SizedBox(height: 12),
@@ -2919,7 +2923,9 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
       if (nearbyOnly && (route == 'ip' || route == 'wifiDirect')) {
         return t('در این حالت مسدود است', 'Blocked in this mode');
       }
-      final count = _number(counts[route]);
+      final count =
+          _number(counts[route]) +
+          (route == 'ip' ? _number(counts['overlay']) : 0);
       if (count > 0) return t('${n(count)} اتصال فعال', '${n(count)} active');
       if (!app.running) return t('متوقف', 'Paused');
       if (route == 'ip') {
@@ -3768,6 +3774,10 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 6),
                   Text(switch (b['receivedVia']) {
+                    'overlay' => t(
+                      'دریافت از شبکهٔ همتاها',
+                      'Received through the peer network',
+                    ),
                     'ip' => t(
                       'دریافت از مسیر اینترنت / شبکهٔ داخلی',
                       'Received via Internet / domestic IP',

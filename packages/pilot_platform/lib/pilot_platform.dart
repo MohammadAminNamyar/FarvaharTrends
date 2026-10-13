@@ -18,6 +18,17 @@ class PilotPlatform {
   static Future<void> releaseIdentityLease(String token) =>
       _channel.invokeMethod('releaseIdentityLease', {'token': token});
 
+  /// A short-lived lease on the active Wi-Fi gateway, when supported.
+  static Future<Map<String, dynamic>> refreshPhoneHelper(int port) async =>
+      Map<String, dynamic>.from(
+        await _channel.invokeMapMethod<String, dynamic>('refreshPhoneHelper', {
+              'port': port,
+            }) ??
+            const {},
+      );
+  static Future<void> releasePhoneHelper() =>
+      _channel.invokeMethod('releasePhoneHelper');
+
   /// Nearby-only IP transport. Native code pins each socket to a real local
   /// Wi-Fi link; these APIs never fall back to the device's default network.
   static Future<void> startLocalWifi({

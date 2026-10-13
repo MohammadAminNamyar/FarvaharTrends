@@ -186,6 +186,21 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_pear:
+    dependency: "direct main"
+    description:
+      path: "packages/flutter_pear"
+      relative: true
+    source: path
+    version: "0.4.9+persiantrend.1"
+  flutter_pear_bare:
+    dependency: transitive
+    description:
+      name: flutter_pear_bare
+      sha256: b885771a6b619af57ef4cc3e4923c3275fd19fc99ebdba8cd9a6db569263db06
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.9"
   flutter_secure_storage:
     dependency: "direct main"
     description:
@@ -618,4 +633,4 @@ packages:
     version: "3.1.4"
 sdks:
   dart: ">=3.13.4 <4.0.0"
-  flutter: ">=3.38.4"
+  flutter: ">=3.44.0"

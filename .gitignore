@@ -76,6 +76,9 @@ artifacts/
 *.apks
 *.ipa
 *.zip
+**/node_modules/
+/packages/flutter_pear/assets/*.bundle
+/packages/flutter_pear/pear-end/version.js
 
 # Credentials, signing material and machine configuration.
 .env

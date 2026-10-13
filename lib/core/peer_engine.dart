@@ -17,7 +17,7 @@ import 'peer_contact_store.dart';
 import 'pilot_store.dart';
 import 'tcp_enrollment.dart';
 
-enum PeerTransport { ip, lan, wifiDirect, bluetooth }
+enum PeerTransport { ip, overlay, lan, wifiDirect, bluetooth }
 
 class NativeAdmission {
   const NativeAdmission({
@@ -98,6 +98,7 @@ class PeerEngine {
   final bool allowLoopbackContactsForTesting;
   final PeerContactStore _contactStore;
   final Map<String, PeerContact> _helperContacts = {};
+  final Map<String, PeerContact> _reconnectContacts = {};
   PeerContact? _ownHelperContact;
   int _contactSignatureChecks = 0;
   int _contactHintsRejected = 0;
@@ -193,9 +194,20 @@ class PeerEngine {
   bool _activeMode = false;
   int _port = 45871;
   int? _bluetoothIngressPort;
+  final Map<String, RawServerSocket> _overlayServers = {};
   int? _localWifiIngressPort;
   int? _wifiDirectIngressPort;
   int? get bluetoothIngressPort => _bluetoothIngressPort;
+  int get boundPort => _port;
+  bool hasPinnedRoute(String peerId, String routeId, PeerTransport transport) {
+    final link = _links[peerId];
+    return _running &&
+        link != null &&
+        !link.closed &&
+        link.routeId == routeId &&
+        link.transport == transport;
+  }
+
   bool _promotionInProgress = false;
   int _generation = 0;
   int _rejected = 0;
@@ -527,6 +539,7 @@ class PeerEngine {
     _peerTraffic.remove(id);
     _pendingBulletins.removeWhere((_, pending) => pending.peerId == id);
     _helperContacts.remove(id);
+    _reconnectContacts.remove(id);
   }
 
   String? _oldestStaleAutomaticContact(int now) {
@@ -561,7 +574,9 @@ class PeerEngine {
   }) => _serial(() async {
     await _load();
     _validateNativeRoute(routeId, transport);
-    if (nearbyOnly && transport == PeerTransport.wifiDirect) {
+    if (nearbyOnly &&
+        (transport == PeerTransport.wifiDirect ||
+            transport == PeerTransport.overlay)) {
       return const NativeAdmission(accepted: false);
     }
     if (!_running) return const NativeAdmission(accepted: false);
@@ -581,13 +596,30 @@ class PeerEngine {
       return const NativeAdmission(accepted: false);
     }
     _nativeRoutes[routeId] = _NativeRoute(peer.id, transport);
+    if (transport == PeerTransport.overlay &&
+        !_overlayServers.containsKey(routeId)) {
+      final server = await RawServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      _overlayServers[routeId] = server;
+      _servers.add(server);
+      _listen(
+        server,
+        _generation,
+        transport: transport,
+        nativeRouteId: routeId,
+      );
+    }
     _notify();
     return NativeAdmission(
       accepted: true,
       peerId: peer.id,
-      ingressPort: transport == PeerTransport.bluetooth
-          ? _bluetoothIngressPort
-          : _port,
+      ingressPort: switch (transport) {
+        PeerTransport.bluetooth => _bluetoothIngressPort,
+        PeerTransport.overlay => _overlayServers[routeId]?.port,
+        _ => _port,
+      },
     );
   });
 
@@ -599,7 +631,9 @@ class PeerEngine {
     required int port,
   }) => _serial(() async {
     _validateNativeRoute(routeId, transport);
-    if (nearbyOnly && transport == PeerTransport.wifiDirect) {
+    if (nearbyOnly &&
+        (transport == PeerTransport.wifiDirect ||
+            transport == PeerTransport.overlay)) {
       throw StateError('Wi-Fi Direct is disabled in nearby-only mode.');
     }
     final route = _nativeRoutes[routeId];
@@ -616,7 +650,9 @@ class PeerEngine {
         host.isMulticast ||
         host.address == '0.0.0.0' ||
         host.address == '::' ||
-        (transport == PeerTransport.bluetooth && !host.isLoopback)) {
+        ((transport == PeerTransport.bluetooth ||
+                transport == PeerTransport.overlay) &&
+            !host.isLoopback)) {
       throw ArgumentError('Invalid native endpoint.');
     }
     _putEndpoint(
@@ -635,6 +671,11 @@ class PeerEngine {
 
   Future<void> removeNativeRoute(String routeId) => _serial(() async {
     _nativeRoutes.remove(routeId);
+    final overlayServer = _overlayServers.remove(routeId);
+    if (overlayServer != null) {
+      _servers.remove(overlayServer);
+      await overlayServer.close();
+    }
     _discoveryHints.removeWhere((_, value) => value.routeId == routeId);
     for (final candidates in _endpoints.values) {
       candidates.removeWhere((endpoint) => endpoint.routeId == routeId);
@@ -698,7 +739,8 @@ class PeerEngine {
     if (routeId.isEmpty ||
         routeId.length > 128 ||
         (transport != PeerTransport.bluetooth &&
-            transport != PeerTransport.wifiDirect)) {
+            transport != PeerTransport.wifiDirect &&
+            transport != PeerTransport.overlay)) {
       throw ArgumentError('Invalid native route.');
     }
   }
@@ -795,14 +837,28 @@ class PeerEngine {
         .map((value) => value.id)
         .toList();
     for (final id in expired) {
-      _helperContacts.remove(id);
+      final contact = _helperContacts.remove(id)!;
+      if (contact.expiresAtMs + PeerContact.maxReconnectAgeMs > now) {
+        _reconnectContacts[id] = contact;
+        _installHelperEndpoint(contact, reconnect: true);
+        continue;
+      }
       _endpoints[id]?.removeWhere(
         (endpoint) => endpoint.routeId == 'helper-contact:$id',
       );
     }
+    for (final id in _reconnectContacts.keys.toList()) {
+      if (_reconnectContacts[id]!.expiresAtMs + PeerContact.maxReconnectAgeMs <=
+          now) {
+        _reconnectContacts.remove(id);
+        _endpoints[id]?.removeWhere(
+          (endpoint) => endpoint.routeId == 'helper-contact:$id',
+        );
+      }
+    }
   }
 
-  void _installHelperEndpoint(PeerContact contact) {
+  void _installHelperEndpoint(PeerContact contact, {bool reconnect = false}) {
     final routeId = 'helper-contact:${contact.id}';
     final host = InternetAddress(contact.peer.host);
     _endpoints[contact.id]?.removeWhere(
@@ -822,7 +878,8 @@ class PeerEngine {
         expiresAtMs:
             _clock.elapsedMilliseconds +
             contact.expiresAtMs -
-            DateTime.now().millisecondsSinceEpoch,
+            DateTime.now().millisecondsSinceEpoch +
+            (reconnect ? PeerContact.maxReconnectAgeMs : 0),
         tcpEnrollment: true,
       ),
     );
@@ -899,6 +956,7 @@ class PeerEngine {
         if (!_running || generation != _generation || link.closed) break;
         _installHelperEndpoint(contact);
         _helperContacts[contact.id] = contact;
+        _reconnectContacts.remove(contact.id);
         changed = true;
       } on FormatException {
         _contactHintsRejected++;
@@ -907,7 +965,10 @@ class PeerEngine {
       }
     }
     if (changed && _running && generation == _generation) {
-      await _contactStore.save(_helperContacts.values);
+      await _contactStore.save([
+        ..._helperContacts.values,
+        ..._reconnectContacts.values,
+      ]);
       if (_running && generation == _generation) {
         unawaited(_dialDue());
         _announceHelperContacts(except: link.peerId);
@@ -923,13 +984,16 @@ class PeerEngine {
     _activeMode = activeMode;
     _lastError = null;
     if (enablePeerReferrals && !nearbyOnly) {
-      for (final contact in await _contactStore.load()) {
+      for (final contact in await _contactStore.loadForReconnect()) {
         if (contact.id == identity.id || _blockedPeers.contains(contact.id)) {
           continue;
         }
         if (await _admitIdentity(contact.peer)) {
-          _helperContacts[contact.id] = contact;
-          _installHelperEndpoint(contact);
+          final expired =
+              contact.expiresAtMs <= DateTime.now().millisecondsSinceEpoch;
+          (expired ? _reconnectContacts : _helperContacts)[contact.id] =
+              contact;
+          _installHelperEndpoint(contact, reconnect: expired);
         }
       }
     }
@@ -1028,6 +1092,7 @@ class PeerEngine {
     await _discovery?.stop();
     _discovery = null;
     _bluetoothIngressPort = null;
+    _overlayServers.clear();
     _localWifiIngressPort = null;
     _wifiDirectIngressPort = null;
     _pendingBulletins.clear();
@@ -1091,8 +1156,12 @@ class PeerEngine {
     _nativeRoutes.removeWhere((_, route) => route.peerId == id);
     _blockedPeers.add(id);
     _helperContacts.remove(id);
+    _reconnectContacts.remove(id);
     if (enablePeerReferrals && !nearbyOnly) {
-      await _contactStore.save(_helperContacts.values);
+      await _contactStore.save([
+        ..._helperContacts.values,
+        ..._reconnectContacts.values,
+      ]);
     }
     await _savePeers();
     final link = _links[id];
@@ -1117,6 +1186,7 @@ class PeerEngine {
     RawServerSocket server,
     int generation, {
     PeerTransport? transport,
+    String? nativeRouteId,
   }) {
     server.listen(
       (socket) {
@@ -1217,8 +1287,15 @@ class PeerEngine {
               _rejected++;
               return;
             }
-            final route = _incomingRoute(id, socket.remoteAddress, transport);
-            if (transport == PeerTransport.bluetooth && route == null) {
+            final route = _incomingRoute(
+              id,
+              socket.remoteAddress,
+              transport,
+              nativeRouteId,
+            );
+            if ((transport == PeerTransport.bluetooth ||
+                    transport == PeerTransport.overlay) &&
+                route == null) {
               await secure.close();
               _rejected++;
               return;
@@ -1474,7 +1551,14 @@ class PeerEngine {
     String peerId,
     InternetAddress source,
     PeerTransport? forced,
+    String? nativeRouteId,
   ) {
+    if (forced == PeerTransport.overlay) {
+      final route = _nativeRoutes[nativeRouteId];
+      return route?.peerId == peerId && route?.transport == forced
+          ? _IncomingRoute(nativeRouteId!, forced!)
+          : null;
+    }
     if (forced == PeerTransport.bluetooth) {
       for (final entry in _nativeRoutes.entries) {
         if (entry.value.peerId == peerId && entry.value.transport == forced) {
@@ -2597,6 +2681,7 @@ class PeerEngine {
       'peerCount': _peers.length,
       'connectedCount': _links.length,
       'helperContactCount': _helperContacts.length,
+      'helperReconnectCount': _reconnectContacts.length,
       'helperContactSignatureChecks': _contactSignatureChecks,
       'helperContactRejectedCount': _contactHintsRejected,
       'advertisingHelper': _ownHelperContact != null,
@@ -2620,6 +2705,7 @@ class PeerEngine {
               'id': peer.id,
               'connected': _links.containsKey(peer.id),
               'transport': _links[peer.id]?.transport.name,
+              'routeId': _links[peer.id]?.routeId,
               'endpointCount': _endpoints[peer.id]?.length ?? 0,
               'origin': _origins[peer.id] ?? 'manual',
               'trust': switch (_origins[peer.id]) {

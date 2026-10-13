@@ -6,3 +6,5 @@ analyzer:
     - build/**
     - android/**
     - ios/**
+    # Upstream style; modified transport code has its own targeted checks.
+    - packages/flutter_pear/**
