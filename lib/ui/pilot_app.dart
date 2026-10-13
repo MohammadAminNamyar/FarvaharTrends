@@ -9,6 +9,7 @@ import 'package:pilot_platform/pilot_platform.dart';
 
 import '../app_controller.dart';
 import 'channel_views.dart';
+import 'news_card.dart';
 import 'channel_tools.dart';
 import '../core/media_store.dart';
 import '../core/delivery_mode.dart';
@@ -3700,26 +3701,46 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
         )
         .toList();
     return [
-      _intro(
-        t('خبرهای انتخاب شما', 'Your news'),
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              t('خبرهای شما', 'Your news'),
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 23,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          if (owned.isNotEmpty) ...[
+            const SizedBox(width: 10),
+            FilledButton.icon(
+              key: const ValueKey('compose-news'),
+              onPressed: app.busy ? null : () => _chooseChannel(owned),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              icon: const Icon(Icons.edit_note_rounded, size: 19),
+              label: Text(t('نوشتن خبر', 'Write news')),
+            ),
+          ],
+        ],
+      ),
+      const SizedBox(height: 8),
+      Text(
         t(
           'فقط از کانال‌هایی که دنبال می‌کنید.',
           'Only from the channels you follow.',
         ),
+        style: const TextStyle(color: _muted, fontSize: 12, height: 1.7),
       ),
-      const SizedBox(height: 21),
-      if (owned.isNotEmpty) ...[
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            key: const ValueKey('compose-news'),
-            onPressed: app.busy ? null : () => _chooseChannel(owned),
-            icon: const Icon(Icons.edit_note_rounded),
-            label: Text(t('نوشتن خبر', 'Write news')),
-          ),
-        ),
-        const SizedBox(height: 17),
-      ],
+      const SizedBox(height: 17),
       if (following.isNotEmpty) ...[
         OutlinedButton(
           key: const ValueKey('news-channel-picker'),
@@ -3795,124 +3816,25 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
           label: Text(t('کشف کانال‌ها', 'Discover channels')),
         ),
       ] else
-        ...visible.map(
-          (b) => Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: _Card(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.campaign_outlined,
-                        size: 17,
-                        color: _tealText,
-                      ),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          _bulletinChannelName(b),
-                          style: const TextStyle(
-                            color: _ink,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        fa
-                            ? _persianDigits(_time(b['createdAtMs']))
-                            : _time(b['createdAtMs']),
-                        style: const TextStyle(color: _muted, fontSize: 10),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    _channelAssessment(b['channelId'] as String),
-                    key: ValueKey('news-trust-${b['id']}'),
-                    style: const TextStyle(color: _muted, fontSize: 10),
-                  ),
-                  const SizedBox(height: 15),
-                  if (b['image'] is Map)
-                    NewsImageView(
-                      image: Map<String, dynamic>.from(b['image'] as Map),
-                      fa: fa,
-                    ),
-                  Text(
-                    b['text'] as String? ?? '',
-                    style: const TextStyle(
-                      color: _ink,
-                      fontSize: 15,
-                      height: 1.9,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(height: 1),
-                  const SizedBox(height: 12),
-                  NewsTimes(news: b, fa: fa),
-                  const SizedBox(height: 8),
-                  Text(
-                    t(
-                      'امضای دیجیتال معتبر · خبر عمومی',
-                      'Valid digital signature · public news',
-                    ),
-                    style: const TextStyle(color: _tealText, fontSize: 10),
-                  ),
-                  const SizedBox(height: 6),
-                  if (b['byline'] is String)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8, bottom: 4),
-                      child: Text(
-                        t('نویسنده: ${b['byline']}', 'By ${b['byline']}'),
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: _muted,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  if (const {
-                    'ip',
-                    'overlay',
-                    'wifiDirect',
-                    'bluetooth',
-                    'lan',
-                    'local',
-                  }.contains(b['receivedVia']))
-                    Text(switch (b['receivedVia']) {
-                      'overlay' => t(
-                        'دریافت از شبکهٔ همتاها',
-                        'Received through the peer network',
-                      ),
-                      'ip' => t(
-                        'دریافت از مسیر اینترنت / شبکهٔ داخلی',
-                        'Received via Internet / domestic IP',
-                      ),
-                      'lan' => t(
-                        'دریافت از وای‌فای محلی',
-                        'Received via local Wi-Fi',
-                      ),
-                      'wifiDirect' => t(
-                        'دریافت از وای‌فای مستقیم',
-                        'Received via Wi-Fi Direct',
-                      ),
-                      'bluetooth' => t(
-                        'دریافت از بلوتوث',
-                        'Received via Bluetooth',
-                      ),
-                      'local' => t(
-                        'منتشرشده در همین دستگاه',
-                        'Published on this device',
-                      ),
-                      _ => t('خبر ذخیره‌شده', 'Saved news'),
-                    }, style: const TextStyle(color: _muted, fontSize: 10)),
-                ],
-              ),
+        ...visible.map((b) {
+          final channel = channels.firstWhere(
+            (c) => c['id'] == b['channelId'],
+            orElse: () => {
+              'id': b['channelId'] ?? b['id'],
+              'name': _bulletinChannelName(b),
+            },
+          );
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: NewsCard(
+              news: b,
+              channel: channel,
+              fa: fa,
+              assessment: _channelAssessment(b['channelId'] as String),
+              onOpenChannel: () => _openChannel(channel),
             ),
-          ),
-        ),
+          );
+        }),
       const SizedBox(height: 17),
       _note(
         Icons.info_outline_rounded,

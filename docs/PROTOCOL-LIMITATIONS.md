@@ -171,3 +171,20 @@ reachability through blocking, incompatible NATs or a disconnected national
 network. Canada-to-Iran mobile/Wi-Fi delivery requires an available cross-border
 path, or an external bridge followed by reachable domestic/nearby paths during
 shutdown. No Iranian provider/shutdown result has been measured here.
+
+## Timeline and reconnection (0.8.0)
+
+Send time is signed UTC milliseconds from the writer. First-receive time is
+private local state and is not overwritten by duplicates. Each writer's signed
+sequence orders their retained posts; a deterministic, nondecreasing send-time
+rank merges writers without using receipt order. Reader timezone only affects
+formatting. This is not a trusted global clock or proof of real-world chronology.
+
+Android's local network handle/address epoch is sampled every five seconds by
+the active overlay. A changed network reopens transport sockets after a short
+debounce, preserving identities, cached contacts and durable news. The epoch is
+used locally, not sent as publisher metadata or included in diagnostic exports.
+Routine connection loss does not quarantine a remembered peer. Temporary
+application cooldowns are bounded and expire outside Hyperswarm's firewall,
+which can otherwise retain a permanent ban after a firewall rejection. These
+changes cannot overcome blocked or incompatible networks.

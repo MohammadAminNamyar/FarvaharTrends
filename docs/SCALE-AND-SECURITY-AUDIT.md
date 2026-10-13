@@ -21,6 +21,7 @@ million reachable, awake forwarding devices.
 | Arrival order could affect the feed; mixed sequence/time comparison could cycle after a clock rollback | One deterministic timeline shared by channel view, channel preview and feed; each writer's signed sequence is preserved | 200 input permutations; multi-writer real TLS delivery in reversed order; equal times, rollback, duplicates, restart |
 | Send and receive times were not clearly separated | Signed UTC send time and private first-receive time displayed in this phone's local timezone, including offset and seconds | Farsi/English widget tests; Samsung native display |
 | A slow connection delayed sending news to other connections | Ordered sends per link, independent fanout, bounded background batches and write queues | Existing TLS relay, deadlines and rate-budget recovery tests |
+| Network replacement left old transport sockets; application cooldown could become a permanent firewall ban | Sample the local network epoch, restart transport after changes, allow routine reconnects and expire application cooldowns outside the firewall; stale route teardown cannot disconnect a replacement | Network-epoch and cooldown tests; real-device recovery results below |
 | Duplicate news repeated expensive signature/native-state work | Drop already admitted content hashes early; use the verified stored object for any diagnostic receipt | TLS duplicate and forged-repeat test; first receive timestamp unchanged |
 | Outbound queue pressure could punish an innocent peer | Defer at our queue limit; reconcile later from inventories | Full protocol suite, egress recovery tests |
 | Cached read/seen IDs could be evicted during unrelated churn | Preserve IDs of currently cached news when pruning private state | 3,000 unrelated arrivals, restart, no false unread/repeated alert |
@@ -122,6 +123,81 @@ resolved. Record all attempts, missing deliveries, discovery delays, per-route
 failures, retention loss, CPU/memory, battery and byte counts. Define a delivery
 SLO for each condition before the trial. Stop increasing scale when those
 thresholds fail; do not infer national coverage from a few successful phones.
+
+## Recorded workload and capacity results
+
+The local stress run used 1,536 signed near-limit text posts from three signing
+keys across 24 channels, followed by 900 deliberately large diagnostic events.
+It retained exactly 256 news items, 24 channel records and 84 events after
+compaction. All retained news IDs survived restart. The compacted journal was
+1,183,749 bytes; journal growth during news insertion peaked at 3,553,088 bytes.
+The complete run took 622,963 ms, including signing, durable writes and restart
+signature verification. This is a desktop workload, not an Android throughput
+result; measured cost varied with cache size and host activity. Verification of
+1,000 editor posts took 3,539 ms on the same host and is not a low-end phone
+performance guarantee.
+
+Measured bulletin frames for the model were 1,576 bytes for owner text and
+5,710 bytes for an editor post including its authorization. With seven outgoing
+copies and the current per-link/global budgets, optimistic forwarding ceilings
+are about 333 owner posts/minute or 92 editor posts/minute **before** discovery,
+inventories, metadata, policy, image and transport overhead.
+
+| Global publishing workload | Ideal 256-item cache turnover | Owner-text demand / per-link budget | Editor demand / per-link budget |
+| --- | --- | --- | --- |
+| 100 publishers, one post each per ten minutes | 25.6 minutes | 0.03× | 0.11× |
+| 1,000 publishers, one post each per minute | 15.36 seconds | 3.01× | 10.89× |
+| 20,000 publishers, one post each per minute | 0.768 seconds | 60.12× | 217.82× |
+| 1,000,000 publishers, one post each per ten minutes | 0.154 seconds | 300.60× | 1,089.10× |
+
+These turnover values assume every global post is admitted. Actual bounded
+admission rejects/defers/evicts posts and does not provide that coverage. They
+demonstrate why changing numeric limits alone cannot make all-channel gossip
+scalable. A million mostly-readers is a different workload from a million
+publishers, but hot-topic discovery and awake/reachable peer availability still
+need real measurements.
+
+The offline graph uses four independent reciprocal random cycles, at most eight
+neighbors per node, ten initially informed active nodes and independent edge
+availability. It omits real discovery, rate limits and correlated partitions.
+With 90% nodes active and 80% links usable it reached 900,352 nodes; with 50%/50%
+it reached 412,833; with 20%/50% it reached only 76. With zero ingress seeds it
+reached zero. These are sensitivity examples for an idealized graph, **not**
+delivery predictions for PersianTrend or Iran.
+
+The Samsung mobile-data trial observed a fresh emulator publication within
+3,859 ms, with Samsung Wi-Fi and Bluetooth off. The installed test build
+displayed signed send time, local receipt time and a signed nickname. Generic
+news notification output contained no article text. Earlier in this review,
+locked mobile-data receipt was observed within 3,000 ms and an optional
+compressed image within 17,187 ms; those earlier trials preceded the final
+reconnection patch. The first two offline/network-change trials failed to
+reconnect within 120 seconds and prompted that patch. They remain failed
+attempts in the record, regardless of later successful trials.
+
+After the final reconnection changes, a new offline publication reached the
+Samsung automatically within 73,829 ms of restoring the emulator's Wi-Fi. No
+application restart or manual synchronization was used during that recovery.
+A fresh reverse-direction Samsung mobile-data publication reached the emulator
+within 3,562 ms. Samsung Wi-Fi and Bluetooth were off in both trials.
+
+The final emulator idle smoke test confirmed deep idle before publication and
+after observing a new post. The screen remained off and the post was observed
+within 3,922 ms, without a permanent battery exemption for the test package.
+The emulator had no secure keyguard, so screen-off is not evidence of a locked
+physical phone. This was a short forced-idle trial over USB/ADB, not an OEM
+overnight or low-power-standby result; temporary OS allowlists were not fully
+characterized. Its previously disabled deep-idle setting was restored afterward.
+
+The final automated run passed 321 Flutter tests; the discovery, cooldown and
+routing-cache Node suites passed ten tests. Static analysis reported no issues.
+The distribution binary uses the production package/topic and omits the test
+device-probe export path. Its signing certificate matches the installed release.
+
+Hosted Pub advisory lookup checked 73 pinned packages and returned no matching
+advisory; npm audit returned zero advisories for the pinned overlay dependency
+tree. These scans exclude the SDK, native artifacts, Android Gradle components
+and local forks and do not prove the absence of vulnerabilities.
 
 ## Reproducing the local workload and offline model
 

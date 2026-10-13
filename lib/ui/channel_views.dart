@@ -1,68 +1,14 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
 import '../core/news_timeline.dart';
 import 'channel_tools.dart';
+import 'news_components.dart';
+import 'news_card.dart';
+export 'news_components.dart';
 
-const _ink = Color(0xFF183F51);
 const _muted = Color(0xFF5A717C);
 const _teal = Color(0xFF267E7B);
-
-String channelActivityTime(BuildContext context, dynamic value, bool fa) {
-  if (value is! int || value.abs() > 8640000000000000) return '';
-  final date = DateTime.fromMillisecondsSinceEpoch(value).toLocal();
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final day = DateTime(date.year, date.month, date.day);
-  final text = day == today
-      ? '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}'
-      : day == DateTime(today.year, today.month, today.day - 1)
-      ? (fa ? 'دیروز' : 'Yesterday')
-      : MaterialLocalizations.of(context).formatShortDate(date);
-  return fa
-      ? text.replaceAllMapped(
-          RegExp('[0-9]'),
-          (m) => '۰۱۲۳۴۵۶۷۸۹'[int.parse(m[0]!)],
-        )
-      : text;
-}
-
-class ChannelAvatar extends StatelessWidget {
-  const ChannelAvatar({super.key, required this.channel, this.size = 48});
-  final Map<String, dynamic> channel;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    const colors = [
-      Color(0xFF247E86),
-      Color(0xFF5275A7),
-      Color(0xFF9770AA),
-      Color(0xFFB77861),
-      Color(0xFF4A8B70),
-    ];
-    final id = channel['id'] as String;
-    final hash = id.codeUnits.fold<int>(0, (sum, c) => (sum * 31 + c) & 0xffff);
-    final name = (channel['name'] as String? ?? '').trim();
-    return ExcludeSemantics(
-      child: CircleAvatar(
-        radius: size / 2,
-        backgroundColor: colors[hash % colors.length],
-        child: Text(
-          name.isEmpty ? '•' : name.characters.first.toUpperCase(),
-          textScaler: TextScaler.noScaling,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: size * .43,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class ChannelOptions extends StatelessWidget {
   const ChannelOptions({
@@ -443,101 +389,15 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                       itemBuilder: (context, index) {
                         final b = news[index];
                         return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Material(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(17),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (b['image'] is Map)
-                                    NewsImageView(
-                                      image: Map<String, dynamic>.from(
-                                        b['image'] as Map,
-                                      ),
-                                      fa: fa,
-                                    ),
-                                  SelectableText(
-                                    b['text'] as String? ?? '',
-                                    style: const TextStyle(
-                                      color: _ink,
-                                      fontSize: 15,
-                                      height: 1.8,
-                                    ),
-                                  ),
-                                  if (b['byline'] is String &&
-                                      (b['byline'] as String).isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 14),
-                                      child: Text(
-                                        t(
-                                          'نویسنده: ${b['byline']}',
-                                          'By ${b['byline']}',
-                                        ),
-                                        key: ValueKey('news-byline-${b['id']}'),
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: _muted,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: NewsTimes(news: b, fa: fa),
-                                      ),
-                                      if (owned)
-                                        IconButton(
-                                          key: ValueKey(
-                                            'remove-news-${b['id']}',
-                                          ),
-                                          tooltip: t('حذف خبر', 'Remove news'),
-                                          onPressed: app.busy
-                                              ? null
-                                              : () =>
-                                                    _remove(b['id'] as String),
-                                          icon: const Icon(
-                                            Icons.delete_outline_rounded,
-                                            size: 19,
-                                            color: _muted,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    t(
-                                      'امضای دیجیتال معتبر · خبر عمومی',
-                                      'Valid digital signature · public news',
-                                    ),
-                                    style: const TextStyle(
-                                      color: _teal,
-                                      fontSize: 10,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  if (const {
-                                    'ip',
-                                    'overlay',
-                                    'wifiDirect',
-                                    'bluetooth',
-                                    'lan',
-                                    'local',
-                                  }.contains(b['receivedVia']))
-                                    Text(
-                                      _arrival(b['receivedVia']),
-                                      style: const TextStyle(
-                                        color: _muted,
-                                        fontSize: 10,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: NewsCard(
+                            news: b,
+                            channel: channel,
+                            fa: fa,
+                            assessment: assessment,
+                            onRemove: owned && !app.busy
+                                ? () => _remove(b['id'] as String)
+                                : null,
                           ),
                         );
                       },
@@ -596,131 +456,4 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
       );
     },
   );
-
-  String _arrival(dynamic route) => switch (route) {
-    'overlay' => t(
-      'دریافت از شبکهٔ همتاها',
-      'Received through the peer network',
-    ),
-    'ip' => t(
-      'دریافت از مسیر اینترنت / شبکهٔ داخلی',
-      'Received via Internet / domestic IP',
-    ),
-    'lan' => t('دریافت از وای‌فای محلی', 'Received via local Wi-Fi'),
-    'wifiDirect' => t('دریافت از وای‌فای مستقیم', 'Received via Wi-Fi Direct'),
-    'bluetooth' => t('دریافت از بلوتوث', 'Received via Bluetooth'),
-    'local' => t('منتشرشده در همین دستگاه', 'Published on this device'),
-    _ => t('خبر ذخیره‌شده', 'Saved news'),
-  };
-}
-
-class NewsImageView extends StatelessWidget {
-  const NewsImageView({super.key, required this.image, required this.fa});
-  final Map<String, dynamic> image;
-  final bool fa;
-  @override
-  Widget build(BuildContext context) {
-    final path = image['path'];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 360),
-          child: path is String
-              ? Image.file(
-                  File(path),
-                  width: double.infinity,
-                  fit: BoxFit.contain,
-                  cacheWidth: 1280,
-                  errorBuilder: (_, _, _) =>
-                      Text(fa ? 'تصویر در دسترس نیست' : 'Image unavailable'),
-                )
-              : Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(18),
-                  color: const Color(0xFFF0F5F5),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.image_outlined, color: _muted),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          fa ? 'تصویر اختیاری · با اتصال مناسب دریافت می‌شود' : 'Optional image · downloads on an allowed connection',
-                          style: const TextStyle(color: _muted, fontSize: 11),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Send time is signed by the writer; receive time stays on this phone.
-class NewsTimes extends StatelessWidget {
-  const NewsTimes({super.key, required this.news, required this.fa});
-  final Map<String, dynamic> news;
-  final bool fa;
-
-  String _digits(String text) => fa
-      ? text.replaceAllMapped(
-          RegExp('[0-9]'),
-          (m) => '۰۱۲۳۴۵۶۷۸۹'[int.parse(m[0]!)],
-        )
-      : text;
-
-  String _stamp(dynamic value) {
-    if (value is! int || value < 0 || value > 253402300799999) {
-      return fa ? 'ثبت نشده' : 'Unavailable';
-    }
-    final date = DateTime.fromMillisecondsSinceEpoch(
-      value,
-      isUtc: true,
-    ).toLocal();
-    final zone = date.timeZoneOffset;
-    String two(int n) => n.toString().padLeft(2, '0');
-    return _digits(
-      '${date.year}/${two(date.month)}/${two(date.day)} '
-      '${two(date.hour)}:${two(date.minute)}:${two(date.second)} '
-      'UTC${zone.isNegative ? '-' : '+'}${two(zone.inMinutes.abs() ~/ 60)}:'
-      '${two(zone.inMinutes.abs() % 60)}',
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final local = news['receivedVia'] == 'local';
-    return Tooltip(
-      message: fa
-          ? 'زمان‌ها در منطقهٔ زمانی همین گوشی نمایش داده می‌شوند. ارسال از ساعت نویسنده و دریافت از ساعت این گوشی است؛ اختلافشان زمان قطعی انتقال نیست.'
-          : 'Both times use this phone’s timezone. Sent uses the writer’s clock; received uses this phone’s clock. Their difference is not a measured delivery duration.',
-      child: Semantics(
-        container: true,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${fa ? 'ارسال' : 'Sent'}: ${_stamp(news['createdAtMs'])}',
-              key: ValueKey('sent-time-${news['id']}'),
-              style: const TextStyle(color: _muted, fontSize: 10, height: 1.7),
-            ),
-            if (!local)
-              Text(
-                '${fa ? 'دریافت در این گوشی' : 'Received on this phone'}: '
-                '${_stamp(news['receivedAtWallMs'])}',
-                key: ValueKey('received-time-${news['id']}'),
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 10,
-                  height: 1.7,
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 }

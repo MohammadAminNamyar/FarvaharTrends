@@ -1,8 +1,13 @@
-# Channels, reading and images — Android 0.7.0
+# Channels, reading and images — Android 0.8.1
 
 Use the same release APK on all test phones. New channel controls, editor posts,
 writer nicknames and media require version 0.7.0. Older applications cannot apply
 removal or revocation notices.
+
+The feed and channel timeline use the same news card: a source header, selectable
+article text and a tinted footer with the writer and local send/receive times.
+Tap a time to view its full date and UTC offset. Following and trust remain
+private choices; a valid signature does not establish factual accuracy.
 
 ## Publish and recover
 

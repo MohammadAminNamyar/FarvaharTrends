@@ -76,7 +76,9 @@ class InternetOverlay {
         }
         final id = connection.remotePublicKey.hex;
         final old = _routes[id];
-        if (old != null) unawaited(old.close());
+        // Disconnect RPCs are keyed by peer, so retiring the old route must not
+        // close the replacement connection for the same peer.
+        if (old != null) unawaited(old.close(disconnect: false));
         final route = _OverlayRoute(this, connection, generation);
         _routes[id] = route;
         unawaited(route.start());
@@ -445,6 +447,7 @@ class _OverlayRoute {
 
   Future<void> close({bool disconnect = true, bool cooldown = false}) async {
     if (closed) return;
+    final pear = owner._pear;
     closed = true;
     if (!helloWritten.isCompleted) helloWritten.complete();
     deadline?.cancel();
@@ -453,15 +456,20 @@ class _OverlayRoute {
     socket?.destroy();
     await server?.close();
     await owner.engine.removeNativeRoute(routeId);
-    if (identical(owner._routes[connection.remotePublicKey.hex], this)) {
+    final ownsPeer = identical(
+      owner._routes[connection.remotePublicKey.hex],
+      this,
+    );
+    if (ownsPeer) {
       owner._routes.remove(connection.remotePublicKey.hex);
     }
-    if (disconnect && owner._pear != null) {
+    if (disconnect &&
+        ownsPeer &&
+        owner._current(generation) &&
+        pear != null &&
+        identical(owner._pear, pear)) {
       try {
-        await owner._pear!.disconnect(
-          connection.remotePublicKey,
-          cooldown: cooldown,
-        );
+        await pear.disconnect(connection.remotePublicKey, cooldown: cooldown);
       } catch (_) {}
     }
   }
