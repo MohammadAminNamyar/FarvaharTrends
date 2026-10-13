@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'channels.dart';
 import 'channel_control.dart';
 import 'models.dart';
+import 'peer_activity.dart';
 
 class ChannelCapacityException extends StateError {
   ChannelCapacityException(this.reason) : super(reason);
@@ -239,6 +240,14 @@ class PilotStore {
     await _append({'kind': 'event', 'value': _flatObject(value)});
   });
 
+  /// Clear just this view's history. Peer contacts and news remain intact.
+  Future<void> clearTemporaryPeerActivity() => _serial(() async {
+    _requireLoaded();
+    await _append({'kind': 'clearPeerActivity'});
+    // Do not leave cleared activity in an old journal or its app backup.
+    await _compact();
+  });
+
   Future<void> flush() => _serial(() async {});
 
   void _requireLoaded() {
@@ -422,6 +431,10 @@ class PilotStore {
         };
       case 'event':
         events.add(_flatObject(_map(record['value'])));
+      case 'clearPeerActivity':
+        events.removeWhere(
+          (event) => peerActivityKinds.contains(event['kind']),
+        );
     }
     if (record['kind'] == 'bulletin' ||
         record['kind'] == 'publication' ||
@@ -438,6 +451,14 @@ class PilotStore {
     while (events.length > maxEvents) {
       events.removeAt(0);
       evictions['events'] = evictions['events']! + 1;
+    }
+    var activityCount = 0;
+    for (var index = events.length - 1; index >= 0; index--) {
+      if (peerActivityKinds.contains(events[index]['kind']) &&
+          ++activityCount > maxTemporaryPeerActivity) {
+        events.removeAt(index);
+        evictions['events'] = evictions['events']! + 1;
+      }
     }
   }
 

@@ -117,6 +117,53 @@ void main() {
     return (left, right);
   }
 
+  test('local peer activity records a pinned connection and verified news without read receipts', () async {
+    final (left, right) = await pair();
+    await until(
+      () async => ((await right.snapshot())['temporaryPeerActivity'] as List)
+          .any((row) => row['kind'] == 'connected'),
+    );
+    final channel = await left.createChannel(
+      name: 'Activity test',
+      description: '',
+    );
+    await left.publishToChannel(
+      channelId: channel.id,
+      text: 'A public article',
+    );
+    await until(
+      () async => ((await right.snapshot())['temporaryPeerActivity'] as List)
+          .any((row) => row['kind'] == 'bulletin_verified'),
+    );
+    final received = await right.snapshot();
+    final log = received['temporaryPeerActivity'] as List;
+    expect(
+      log.where((row) => row['kind'] == 'bulletin_verified'),
+      hasLength(1),
+    );
+    for (final row in log) {
+      expect((row as Map).keys.toSet(), {
+        'kind',
+        'peerId',
+        'atWallMs',
+        'transport',
+      });
+    }
+    expect(received['receiptCount'], 0);
+    await right.clearTemporaryLog();
+    final cleared = await right.snapshot();
+    expect(cleared['temporaryPeerActivity'], isEmpty);
+    expect(cleared['connectedCount'], 1);
+    expect(cleared['bulletinCount'], 1);
+    expect(cleared['channels'], hasLength(1));
+    await right.removePeer(a.id);
+    await until(
+      () async => ((await right.snapshot())['temporaryPeerActivity'] as List)
+          .any((row) => row['kind'] == 'disconnected'),
+    );
+    expect((await right.snapshot())['connectedCount'], 0);
+  });
+
   SecurityContext clientContext(Identity client, Identity server) =>
       SecurityContext(withTrustedRoots: false)
         ..useCertificateChainBytes(utf8.encode(client.certPem))

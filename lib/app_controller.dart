@@ -221,6 +221,12 @@ void serviceMain(ServiceInstance service) async {
             );
           case 'removePeer':
             await engine!.removePeer(command['id'] as String);
+          case 'clearTemporaryLog':
+            await engine!.clearTemporaryLog();
+            service.invoke('status', {
+              ...await engine!.snapshot(),
+              'overlay': overlayState,
+            });
           case 'publish':
             await engine!.publish(
               runId: command['runId'] as String,
@@ -914,6 +920,19 @@ class AppController extends ChangeNotifier {
       await _send('snapshot');
     } else {
       _local ??= _makeEngine();
+      snapshot = await _local!.snapshot();
+    }
+    notifyListeners();
+  }
+
+  Future<void> clearTemporaryLog() async {
+    _ensureAlive();
+    await _reconcileService();
+    if (activeMode && Platform.isAndroid) {
+      await _send('clearTemporaryLog');
+    } else {
+      _local ??= _makeEngine();
+      await _local!.clearTemporaryLog();
       snapshot = await _local!.snapshot();
     }
     notifyListeners();

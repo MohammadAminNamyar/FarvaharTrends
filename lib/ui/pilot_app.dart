@@ -10,6 +10,7 @@ import 'package:pilot_platform/pilot_platform.dart';
 import '../app_controller.dart';
 import 'channel_views.dart';
 import 'news_card.dart';
+import 'temporary_log.dart';
 import 'channel_tools.dart';
 import '../core/media_store.dart';
 import '../core/delivery_mode.dart';
@@ -2333,12 +2334,19 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        t('پرشین‌ترند', 'PersianTrend'),
-                        style: const TextStyle(
-                          color: _ink,
-                          fontSize: 21,
-                          fontWeight: FontWeight.w800,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: fa
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: Text(
+                          t('پرشین‌ترند', 'PersianTrend'),
+                          maxLines: 1,
+                          style: const TextStyle(
+                            color: _ink,
+                            fontSize: 21,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -2433,6 +2441,7 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                 onRefresh: () => app.perform(app.refresh),
                 child: Builder(
                   builder: (context) {
+                    if (tab == 3) return TemporaryLogView(app: app);
                     final items = <Widget>[
                       if (app.error != null)
                         Padding(
@@ -2505,6 +2514,11 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
           NavigationDestination(
             icon: const Icon(Icons.article_outlined, size: 22),
             label: t('خبرها', 'News'),
+          ),
+          NavigationDestination(
+            key: const ValueKey('temporary-log-tab'),
+            icon: const Icon(Icons.history_rounded, size: 22),
+            label: t('گزارش موقت', 'Temporary log'),
           ),
         ],
       ),

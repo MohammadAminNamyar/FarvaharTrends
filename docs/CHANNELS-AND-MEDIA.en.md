@@ -1,4 +1,18 @@
-# Channels, reading and images — Android 0.8.1
+# Channels, reading and images — Android 0.8.2
+
+## Temporary log
+
+The **Temporary log** tab shows this phone's successful connections, disconnections
+and signed-news arrivals, with the transport and local time. It retains up to 200
+activity entries. Short connection fingerprints identify connections, not
+publishers or people. Consenting testers can compare their own displayed
+connection fingerprint with your local log manually.
+
+This is local troubleshooting: IP addresses, peer names, article text and channel
+details are omitted from this view. It does not track all users or prove reading.
+**Clear log** clears this activity from the app journal, without removing news,
+channels or contacts or ending live connections. New activity is recorded again
+after clearing.
 
 Use the same release APK on all test phones. New channel controls, editor posts,
 writer nicknames and media require version 0.7.0. Older applications cannot apply

@@ -19,6 +19,7 @@ import 'models.dart';
 import 'peer_discovery.dart';
 import 'peer_contact.dart';
 import 'peer_contact_store.dart';
+import 'peer_activity.dart';
 import 'pilot_store.dart';
 import 'tcp_enrollment.dart';
 
@@ -153,6 +154,7 @@ class PeerEngine {
   static const incomingHandshakesGlobal = 64;
   static const maxIncomingHandshakes = 4;
   static const _connectionLogKinds = {
+    'disconnected',
     'connected',
     'connect_failed',
     'tls_rejected',
@@ -2767,7 +2769,16 @@ class PeerEngine {
     link.writeReady = null;
     if (ready != null && !ready.isCompleted) ready.complete();
     unawaited(link.subscription?.cancel());
-    if (identical(_links[link.peerId], link)) _links.remove(link.peerId);
+    if (identical(_links[link.peerId], link)) {
+      _links.remove(link.peerId);
+      unawaited(
+        _event(
+          'disconnected',
+          peerId: link.peerId,
+          extra: {'transport': link.transport.name},
+        ),
+      );
+    }
     if (_running && reason != 'duplicate_link') {
       for (final endpoint in _endpoints[link.peerId] ?? <_Endpoint>[]) {
         if (endpoint.key == link.endpointKey) {
@@ -2804,6 +2815,7 @@ class PeerEngine {
         'peerId': ?peerId,
         ...?extra,
       });
+      if (peerActivityKinds.contains(kind)) _notify();
     } catch (_) {
       _lastError = 'storage_log_failed';
     }
@@ -3021,8 +3033,15 @@ class PeerEngine {
       'publications': _publicationResults(),
       'trials': _trialResults(),
       'events': _store.events.reversed.take(40).toList(),
+      'temporaryPeerActivity': temporaryPeerActivity(_store.events),
       'evictions': Map<String, int>.from(_store.evictions),
     };
+  }
+
+  Future<void> clearTemporaryLog() async {
+    await _load();
+    await _store.clearTemporaryPeerActivity();
+    _notify();
   }
 
   Map<String, dynamic> _exportState(Map<String, dynamic> state) {

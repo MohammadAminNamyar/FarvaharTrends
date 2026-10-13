@@ -494,11 +494,11 @@ void main() {
     },
   );
 
-  testWidgets('Reader navigation has only Connection, Channels and News', (
+  testWidgets('Reader navigation includes Temporary log without Results', (
     tester,
   ) async {
     await showApp(tester);
-    expect(find.byType(NavigationDestination), findsNWidgets(3));
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
     expect(find.text('Results'), findsNothing);
     expect(find.text('Export trial report'), findsNothing);
   });
