@@ -3,8 +3,9 @@ import 'dart:io';
 
 import 'delivery_mode.dart';
 
-/// A missing, invalid or interrupted preference always selects nearby only.
-/// Backups are used to roll back failed writes, never to restore a broader mode.
+/// New installations durably select automatic routing across all networks.
+/// Invalid, missing-after-initialization or interrupted preferences fail closed.
+/// Backups roll back failed writes, never restore a broader mode during loading.
 class DeliveryModeStore {
   DeliveryModeStore(this.directory);
 
@@ -13,13 +14,35 @@ class DeliveryModeStore {
   static const maxBytes = 256;
   File get _file => File('${directory.path}/delivery-mode.json');
   File get _nearbyLatch => File('${directory.path}/delivery-mode.nearby-only');
+  File get _initialized => File('${directory.path}/delivery-mode.initialized');
+
+  Future<bool> _exists(File file) async =>
+      await FileSystemEntity.type(file.path, followLinks: false) !=
+      FileSystemEntityType.notFound;
+
+  Future<void> _markInitialized() async {
+    if (!await _exists(_initialized)) {
+      await _initialized.writeAsString('1', flush: true);
+    }
+  }
 
   Future<DeliveryMode> load() async {
     try {
       // The restrictive choice takes precedence even if its later JSON commit
       // was interrupted. Never resume an older all-networks preference.
-      if (await _nearbyLatch.exists()) return DeliveryMode.nearbyOnly;
-      if (!await _file.exists()) return DeliveryMode.nearbyOnly;
+      if (await _exists(_nearbyLatch)) return DeliveryMode.nearbyOnly;
+      if (await _exists(File('${_file.path}.next')) ||
+          await _exists(File('${_file.path}.bak'))) {
+        throw const FormatException();
+      }
+      if (!await _exists(_file)) {
+        if (await _exists(_initialized)) throw const FormatException();
+        // Commit the first-use default before returning it. The marker is
+        // written first, so an interrupted initialization cannot be mistaken
+        // for a fresh installation on the next load.
+        await save(DeliveryMode.allNetworks);
+        return DeliveryMode.allNetworks;
+      }
       if (await _file.length() > maxBytes) throw const FormatException();
       final data = jsonDecode(utf8.decode(await _file.readAsBytes()));
       if (data is! Map ||
@@ -28,11 +51,14 @@ class DeliveryModeStore {
           !data.containsKey('mode')) {
         throw const FormatException();
       }
-      return switch (data['mode']) {
+      final mode = switch (data['mode']) {
         'nearbyOnly' => DeliveryMode.nearbyOnly,
         'allNetworks' => DeliveryMode.allNetworks,
         _ => throw const FormatException(),
       };
+      // Existing explicit preferences retain their choice during an upgrade.
+      await _markInitialized();
+      return mode;
     } on FormatException {
       recovered = true;
       return DeliveryMode.nearbyOnly;
@@ -47,6 +73,7 @@ class DeliveryModeStore {
     if (mode == DeliveryMode.nearbyOnly) {
       await _nearbyLatch.writeAsString('1', flush: true);
     }
+    await _markInitialized();
     final next = File('${_file.path}.next');
     final backup = File('${_file.path}.bak');
     await next.writeAsString(

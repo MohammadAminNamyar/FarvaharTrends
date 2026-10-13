@@ -6,13 +6,15 @@ A Farsi-first Flutter application for following public channels and exchanging s
 
 ## How it works
 
-- **Nearby only** is the default: Bluetooth and devices on the same local Wi-Fi. Android Wi-Fi sockets are bound to an eligible Wi-Fi network and checked against its on-link routes. Failure does not fall back to mobile data. Wi-Fi Direct is disabled in this mode.
-- **All networks** explicitly enables reachable Internet/domestic-network routes and experimental Android Wi-Fi Direct, as well as local Wi-Fi and Bluetooth. A reachable peer is still required; carrier NAT and filtering can prevent connections.
+- **All networks** is the automatic default on a new installation: reachable Internet/domestic-network routes, local Wi-Fi, experimental Android Wi-Fi Direct and Bluetooth. Existing saved mode choices are preserved. Damaged or interrupted preferences recover to Nearby only.
+- **Nearby only** is an optional boundary for Bluetooth and devices on the same local Wi-Fi. Android Wi-Fi sockets are bound to an eligible Wi-Fi network and checked against its on-link routes. Failure does not fall back to mobile data. Wi-Fi Direct is disabled in this mode.
 - Channels and news items have digital signatures. Publisher and connection identities use separate persisted keys. Channel names are not unique identities, and signatures do not establish whether news is true.
 - Readers choose which channels to follow, hide, block, or personally trust. These preferences remain local. Public news is cached and relayed independently of the feed, with bounded message, connection, request, and storage limits. Those limits do not defeat attackers creating many identities.
 - New news is pushed to connected peers; bounded inventories reconcile missing items on reconnection and periodically. Objects are deduplicated by signed identity rather than overwritten by a newer phone timestamp.
 
-There is no required central account service, analytics service, push notification backend, or remote configuration. Volunteer peers are optional infrastructure, and must remain reachable to help distribution. The checked-in `assets/bootstrap.json` intentionally contains no starting peers. Local multicast discovery can find nearby devices when the network permits it; cross-provider discovery is not automatically available without reachable peers.
+There is no required central account service, analytics service, push notification backend, or remote configuration. Volunteer peers are real infrastructure: they forward and cache signed news and must remain reachable. The checked-in `assets/bootstrap.json` intentionally contains no starting peers. A deployment-specific APK can bundle several pinned peers through `PERSIANTREND_BOOTSTRAP_JSON`; testers do not enter addresses. Local discovery remains available alongside these peers. No public or Iranian volunteer host has been provisioned by this source checkout.
+
+Version 0.6 adds opt-in TCP enrollment on volunteer relays so a phone can establish an outbound connection without UDP discovery or inbound port forwarding. Ordinary phones still reject unknown connection certificates. See the [volunteer peer deployment guide](docs/VOLUNTEER-PEERS.en.md). Configuring a numeric address does not prove it is reachable, and two relay processes on one computer do not provide independent hosting.
 
 ## Privacy and platform limits
 

@@ -139,12 +139,12 @@ void main() {
   test('Changing delivery mode while paused keeps receiving paused', () async {
     final engine = _Engine(directory, identity);
     final app = controller(engine);
-    expect(app.deliveryMode, DeliveryMode.nearbyOnly);
-    await app.setDeliveryMode(DeliveryMode.allNetworks);
     expect(app.deliveryMode, DeliveryMode.allNetworks);
+    await app.setDeliveryMode(DeliveryMode.nearbyOnly);
+    expect(app.deliveryMode, DeliveryMode.nearbyOnly);
     expect(app.running, isFalse);
     expect(engine.receiving, isFalse);
-    expect(await DeliveryModeStore(directory).load(), DeliveryMode.allNetworks);
+    expect(await DeliveryModeStore(directory).load(), DeliveryMode.nearbyOnly);
     app.dispose();
   });
 
@@ -155,13 +155,13 @@ void main() {
       final app = controller(engine);
       await app.start(active: false);
       expect(engine.starts, 1);
-      await app.setDeliveryMode(DeliveryMode.allNetworks);
+      await app.setDeliveryMode(DeliveryMode.nearbyOnly);
       expect(engine.stops, greaterThanOrEqualTo(2));
       expect(engine.starts, 2);
       expect(app.running, isTrue);
       expect(
         await DeliveryModeStore(directory).load(),
-        DeliveryMode.allNetworks,
+        DeliveryMode.nearbyOnly,
       );
       app.dispose();
     },

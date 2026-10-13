@@ -33,6 +33,7 @@ void main() {
   Future<_ModeController> showApp(
     WidgetTester tester, {
     String language = 'fa',
+    DeliveryMode? mode,
     double scale = 1,
     Size size = const Size(390, 844),
   }) async {
@@ -43,6 +44,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     final app = _ModeController(connection, publisher)..languageCode = language;
+    if (mode != null) app.deliveryMode = mode;
     addTearDown(app.dispose);
     await tester.pumpWidget(
       PersianTrendApp(controller: app, initialize: false, animateRadar: false),
@@ -70,33 +72,81 @@ void main() {
   Finder option(DeliveryMode mode) =>
       find.byKey(ValueKey('delivery-mode-${mode.name}'));
 
+  testWidgets('Farsi defaults to automatic all networks with nearby fallback', (
+    tester,
+  ) async {
+    final app = await showApp(tester);
+    await reveal(tester, find.byKey(const ValueKey('delivery-mode-card')));
+    expect(app.deliveryMode, DeliveryMode.allNetworks);
+    expect(find.text('فقط نزدیک'), findsOneWidget);
+    expect(find.text('همهٔ شبکه‌ها'), findsOneWidget);
+    expect(
+      tester.widget<InkWell>(option(DeliveryMode.nearbyOnly)).onTap,
+      isNotNull,
+    );
+    expect(
+      tester.widget<InkWell>(option(DeliveryMode.allNetworks)).onTap,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('delivery-mode-explanation')))
+          .data,
+      allOf(
+        contains('دیتای موبایل یا هر وای‌فای'),
+        contains('وای‌فای محلی و بلوتوث هم فعال می‌مانند'),
+        contains('همتای قابل دسترس'),
+      ),
+    );
+    expect(
+      Directionality.of(tester.element(option(DeliveryMode.nearbyOnly))),
+      TextDirection.rtl,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'Farsi nearby mode is selected and explains mobile data clearly',
+    'English defaults to automatic all networks with honest route status',
     (tester) async {
-      final app = await showApp(tester);
-      await reveal(tester, find.byKey(const ValueKey('delivery-mode-card')));
+      final app = await showApp(tester, language: 'en');
+      await reveal(tester, option(DeliveryMode.allNetworks));
+      expect(app.deliveryMode, DeliveryMode.allNetworks);
+      expect(
+        tester.widget<InkWell>(option(DeliveryMode.allNetworks)).onTap,
+        isNull,
+      );
+      expect(
+        find.textContaining('Automatic: Internet and domestic routes'),
+        findsOneWidget,
+      );
+      await reveal(
+        tester,
+        find.byKey(const ValueKey('transport-priority-card')),
+      );
+      expect(find.text('1. Internet / domestic IP'), findsOneWidget);
+      expect(find.text('Waiting for a reachable peer'), findsOneWidget);
+      expect(
+        find.textContaining('local Wi-Fi and Bluetooth available for fallback'),
+        findsOneWidget,
+      );
+      expect(find.text('Blocked in this mode'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'An existing Farsi Nearby only choice keeps mobile data restricted',
+    (tester) async {
+      final app = await showApp(tester, mode: DeliveryMode.nearbyOnly);
+      await reveal(tester, option(DeliveryMode.nearbyOnly));
       expect(app.deliveryMode, DeliveryMode.nearbyOnly);
-      expect(find.text('فقط نزدیک'), findsOneWidget);
-      expect(find.text('همهٔ شبکه‌ها'), findsOneWidget);
       expect(
         tester.widget<InkWell>(option(DeliveryMode.nearbyOnly)).onTap,
         isNull,
       );
       expect(
-        tester.widget<InkWell>(option(DeliveryMode.allNetworks)).onTap,
-        isNotNull,
-      );
-      expect(
-        tester
-            .widget<Text>(
-              find.byKey(const ValueKey('delivery-mode-explanation')),
-            )
-            .data,
-        contains('برای برنامه‌های دیگر روشن بماند'),
-      );
-      expect(
-        Directionality.of(tester.element(option(DeliveryMode.nearbyOnly))),
-        TextDirection.rtl,
+        find.textContaining('برای برنامه‌های دیگر روشن بماند'),
+        findsOneWidget,
       );
       expect(tester.takeException(), isNull);
     },
@@ -105,7 +155,11 @@ void main() {
   testWidgets('English switches explicitly to all networks and back', (
     tester,
   ) async {
-    final app = await showApp(tester, language: 'en');
+    final app = await showApp(
+      tester,
+      language: 'en',
+      mode: DeliveryMode.nearbyOnly,
+    );
     await reveal(tester, option(DeliveryMode.allNetworks));
     await tester.tap(option(DeliveryMode.allNetworks));
     await tester.pumpAndSettle();
@@ -134,7 +188,11 @@ void main() {
   testWidgets('Switching disables both choices until the operation finishes', (
     tester,
   ) async {
-    final app = await showApp(tester, language: 'en');
+    final app = await showApp(
+      tester,
+      language: 'en',
+      mode: DeliveryMode.nearbyOnly,
+    );
     app.modeGate = Completer<void>();
     await reveal(tester, option(DeliveryMode.allNetworks));
     await tester.tap(option(DeliveryMode.allNetworks));
@@ -155,7 +213,11 @@ void main() {
   testWidgets(
     'A failed switch keeps the selected mode and displays the error',
     (tester) async {
-      final app = await showApp(tester, language: 'en');
+      final app = await showApp(
+        tester,
+        language: 'en',
+        mode: DeliveryMode.nearbyOnly,
+      );
       app.failNextChange = true;
       await reveal(tester, option(DeliveryMode.allNetworks));
       await tester.tap(option(DeliveryMode.allNetworks));
@@ -175,7 +237,11 @@ void main() {
   testWidgets('Changing mode while paused does not suggest receiving resumed', (
     tester,
   ) async {
-    final app = await showApp(tester, language: 'en');
+    final app = await showApp(
+      tester,
+      language: 'en',
+      mode: DeliveryMode.nearbyOnly,
+    );
     app.running = false;
     app.notifyListeners();
     await tester.pumpAndSettle();
@@ -191,7 +257,11 @@ void main() {
   testWidgets('Nearby mode does not label stale remote connections as active', (
     tester,
   ) async {
-    final app = await showApp(tester, language: 'en');
+    final app = await showApp(
+      tester,
+      language: 'en',
+      mode: DeliveryMode.nearbyOnly,
+    );
     app.snapshot['activeTransportCounts'] = {'ip': 7};
     app.notifyListeners();
     await tester.pumpAndSettle();
@@ -270,6 +340,7 @@ void main() {
       await showApp(
         tester,
         language: language,
+        mode: DeliveryMode.nearbyOnly,
         size: const Size(360, 800),
         scale: 1.8,
       );

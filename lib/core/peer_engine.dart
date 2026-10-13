@@ -12,7 +12,10 @@ import 'identity.dart';
 import 'local_wifi_transport.dart';
 import 'models.dart';
 import 'peer_discovery.dart';
+import 'peer_contact.dart';
+import 'peer_contact_store.dart';
 import 'pilot_store.dart';
+import 'tcp_enrollment.dart';
 
 enum PeerTransport { ip, lan, wifiDirect, bluetooth }
 
@@ -41,6 +44,10 @@ class PeerEngine {
     this.listenPort = 45871,
     this.bootstrapPeers = const [],
     this.enableLanDiscovery = true,
+    this.enableUdpDiscovery = true,
+    this.acceptTcpEnrollment = false,
+    this.enablePeerReferrals = false,
+    this.allowLoopbackContactsForTesting = false,
     this.discoveryPort = 45872,
     this.readIdleTimeout = const Duration(seconds: 75),
     this.trafficWindow = const Duration(minutes: 1),
@@ -60,6 +67,10 @@ class PeerEngine {
        assert(bluetoothFrameTimeout > Duration.zero),
        assert(nearbyDiscoveryInterval > Duration.zero),
        publisherIdentity = publisherIdentity ?? identity,
+       _contactStore = PeerContactStore(
+         directory,
+         allowLoopbackForTesting: allowLoopbackContactsForTesting,
+       ),
        _store = PilotStore(
          directory,
          localOwnerId: (publisherIdentity ?? identity).id,
@@ -76,6 +87,20 @@ class PeerEngine {
   final int listenPort;
   final List<PeerCard> bootstrapPeers;
   final bool enableLanDiscovery;
+  final bool enableUdpDiscovery;
+
+  /// Volunteer relay opt-in. Ordinary phones retain strict pinned TLS ingress.
+  final bool acceptTcpEnrollment;
+
+  /// Advertise only explicit helper contacts; ordinary reader addresses are
+  /// never inferred from incoming sockets or added to a participant directory.
+  final bool enablePeerReferrals;
+  final bool allowLoopbackContactsForTesting;
+  final PeerContactStore _contactStore;
+  final Map<String, PeerContact> _helperContacts = {};
+  PeerContact? _ownHelperContact;
+  int _contactSignatureChecks = 0;
+  int _contactHintsRejected = 0;
   final int discoveryPort;
   final Duration readIdleTimeout;
   final Duration trafficWindow;
@@ -104,6 +129,9 @@ class PeerEngine {
   static const responseRepeatMs = 10000;
   static const maxRecentResponses = 512;
   static const invalidPublisherObjectsPerWindow = 16;
+  static const helperContactsPerFrame = 4;
+  static const helperContactAttemptsPerPeer = 16;
+  static const helperContactAttemptsGlobal = 64;
   static const newChannelsPerPeer = 8;
   static const newChannelsGlobal = 32;
   static const incomingHandshakesPerAddress = 16;
@@ -334,6 +362,7 @@ class PeerEngine {
       }
       return;
     }
+    if (!enableUdpDiscovery) return;
     // The listener also serves explicit Wi-Fi Direct probes when ordinary LAN
     // multicast is disabled. An address hint alone never admits a certificate.
     _discovery = PeerDiscovery(
@@ -497,6 +526,7 @@ class PeerEngine {
     _endpoints.remove(id);
     _peerTraffic.remove(id);
     _pendingBulletins.removeWhere((_, pending) => pending.peerId == id);
+    _helperContacts.remove(id);
   }
 
   String? _oldestStaleAutomaticContact(int now) {
@@ -692,6 +722,7 @@ class PeerEngine {
         availableSinceMs: _clock.elapsedMilliseconds,
         expiresAtMs: automatic ? _clock.elapsedMilliseconds + 45000 : null,
         durable: !automatic,
+        tcpEnrollment: peer.tcpEnrollment,
       ),
     );
   }
@@ -725,12 +756,183 @@ class PeerEngine {
     candidates.add(endpoint);
   }
 
+  /// Called by a consenting helper's network adapter after obtaining a lease.
+  /// Receiving phones never advertise an address merely because they connect.
+  Future<void> publishHelperEndpoint({
+    required String host,
+    required int port,
+    required int lifetimeMs,
+  }) => _serial(() async {
+    if (!_running ||
+        nearbyOnly ||
+        !enablePeerReferrals ||
+        !acceptTcpEnrollment) {
+      throw StateError('Reachable helper operation is not enabled.');
+    }
+    _ownHelperContact = PeerContact.create(
+      identity,
+      host: host,
+      port: port,
+      lifetimeMs: lifetimeMs,
+      allowLoopbackForTesting: allowLoopbackContactsForTesting,
+    );
+    _announceHelperContacts();
+    _notify();
+  });
+
+  Future<void> withdrawHelperEndpoint() => _serial(() async {
+    _ownHelperContact = null;
+    _notify();
+  });
+
+  void _expireHelperContacts() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if ((_ownHelperContact?.expiresAtMs ?? now + 1) <= now) {
+      _ownHelperContact = null;
+    }
+    final expired = _helperContacts.values
+        .where((value) => value.expiresAtMs <= now)
+        .map((value) => value.id)
+        .toList();
+    for (final id in expired) {
+      _helperContacts.remove(id);
+      _endpoints[id]?.removeWhere(
+        (endpoint) => endpoint.routeId == 'helper-contact:$id',
+      );
+    }
+  }
+
+  void _installHelperEndpoint(PeerContact contact) {
+    final routeId = 'helper-contact:${contact.id}';
+    final host = InternetAddress(contact.peer.host);
+    _endpoints[contact.id]?.removeWhere(
+      (endpoint) =>
+          endpoint.routeId == routeId &&
+          (endpoint.host.address != host.address ||
+              endpoint.port != contact.peer.port),
+    );
+    _putEndpoint(
+      _Endpoint(
+        peerId: contact.id,
+        routeId: routeId,
+        transport: PeerTransport.ip,
+        host: host,
+        port: contact.peer.port,
+        availableSinceMs: _clock.elapsedMilliseconds,
+        expiresAtMs:
+            _clock.elapsedMilliseconds +
+            contact.expiresAtMs -
+            DateTime.now().millisecondsSinceEpoch,
+        tcpEnrollment: true,
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>> _contactsFor(_Link link) {
+    _expireHelperContacts();
+    final own = _ownHelperContact;
+    final candidates = _helperContacts.values
+        .where((contact) => contact.id != link.peerId)
+        .toList();
+    final remaining = helperContactsPerFrame - (own == null ? 0 : 1);
+    final start = candidates.isEmpty
+        ? 0
+        : link.helperContactOffset % candidates.length;
+    final page = [
+      ...candidates.skip(start),
+      ...candidates.take(start),
+    ].take(remaining);
+    link.helperContactOffset = candidates.isEmpty
+        ? 0
+        : (start + remaining) % candidates.length;
+    return [
+      if (own != null) own.toJson(),
+      ...page.map((contact) => contact.toJson()),
+    ];
+  }
+
+  void _announceHelperContacts({String? except}) {
+    for (final link in _links.values.toList()) {
+      if (link.peerId != except && !link.closed) {
+        unawaited(_sendInventory(link));
+      }
+    }
+  }
+
+  Future<void> _receiveHelperContacts(_Link link, dynamic raw) async {
+    if (raw == null) return;
+    if (raw is! List || raw.length > helperContactsPerFrame) {
+      _contactHintsRejected++;
+      return;
+    }
+    final generation = _generation;
+    var changed = false;
+    for (final value in raw) {
+      if (!_running || generation != _generation || link.closed) break;
+      final traffic = _traffic(link.peerId);
+      if (traffic.window.contactItems >= helperContactAttemptsPerPeer ||
+          _globalTraffic.contactItems >= helperContactAttemptsGlobal) {
+        break;
+      }
+      traffic.window.contactItems++;
+      _globalTraffic.contactItems++;
+      if (value is! Map<String, dynamic>) {
+        _contactHintsRejected++;
+        continue;
+      }
+      try {
+        _contactSignatureChecks++;
+        final contact = PeerContact.parse(
+          value,
+          allowLoopbackForTesting: allowLoopbackContactsForTesting,
+        );
+        if (contact.id == identity.id ||
+            _blockedPeers.contains(contact.id) ||
+            _cooling(contact.id)) {
+          continue;
+        }
+        final previous = _helperContacts[contact.id];
+        if (previous != null && previous.issuedAtMs >= contact.issuedAtMs) {
+          continue;
+        }
+        if (!await _admitIdentity(contact.peer)) continue;
+        if (!_running || generation != _generation || link.closed) break;
+        _installHelperEndpoint(contact);
+        _helperContacts[contact.id] = contact;
+        changed = true;
+      } on FormatException {
+        _contactHintsRejected++;
+      } on StateError {
+        _contactHintsRejected++;
+      }
+    }
+    if (changed && _running && generation == _generation) {
+      await _contactStore.save(_helperContacts.values);
+      if (_running && generation == _generation) {
+        unawaited(_dialDue());
+        _announceHelperContacts(except: link.peerId);
+        _notify();
+      }
+    }
+  }
+
   Future<void> start({required bool activeMode}) => _serial(() async {
     await _load();
     if (_running && _activeMode == activeMode) return;
     if (_running) await _stopImpl();
     _activeMode = activeMode;
     _lastError = null;
+    if (enablePeerReferrals && !nearbyOnly) {
+      for (final contact in await _contactStore.load()) {
+        if (contact.id == identity.id || _blockedPeers.contains(contact.id)) {
+          continue;
+        }
+        if (await _admitIdentity(contact.peer)) {
+          _helperContacts[contact.id] = contact;
+          _installHelperEndpoint(contact);
+        }
+      }
+    }
     _serverContext = _context(_peers.values);
     _running = true;
     final generation = ++_generation;
@@ -806,6 +1008,7 @@ class PeerEngine {
 
   Future<void> _stopImpl() async {
     _running = false;
+    _ownHelperContact = null;
     _generation++;
     _retryTimer?.cancel();
     _inventoryTimer?.cancel();
@@ -887,6 +1090,10 @@ class PeerEngine {
     _endpoints.remove(id);
     _nativeRoutes.removeWhere((_, route) => route.peerId == id);
     _blockedPeers.add(id);
+    _helperContacts.remove(id);
+    if (enablePeerReferrals && !nearbyOnly) {
+      await _contactStore.save(_helperContacts.values);
+    }
     await _savePeers();
     final link = _links[id];
     if (link != null) _drop(link, 'removed');
@@ -932,9 +1139,32 @@ class PeerEngine {
           RawSecureSocket? secure;
           var expired = false;
           try {
+            TcpEnrollmentPreface? preface;
+            PeerCard? enrolling;
+            if (acceptTcpEnrollment && !nearbyOnly && transport == null) {
+              preface = await TcpEnrollment.read(socket);
+              if (preface.beacon != null) {
+                enrolling = PeerDiscovery.parseBeacon(
+                  preface.beacon!,
+                  socket.remoteAddress,
+                );
+                if (enrolling.id == identity.id ||
+                    _blockedPeers.contains(enrolling.id) ||
+                    _cooling(enrolling.id)) {
+                  throw const FormatException('Enrollment identity rejected.');
+                }
+              }
+            }
+            if (!_running || generation != _generation) {
+              throw const SocketException('Receiving stopped.');
+            }
             final handshake = RawSecureSocket.secureServer(
               socket,
-              _serverContext!,
+              // An unknown key is trusted only for this handshake. No cache or
+              // routing state changes until mTLS proves possession of its key.
+              enrolling == null ? _serverContext! : _context([enrolling]),
+              subscription: preface?.subscription,
+              bufferedData: preface?.bufferedTls,
               requestClientCertificate: true,
               requireClientCertificate: true,
             );
@@ -953,6 +1183,33 @@ class PeerEngine {
             final id = certificate == null
                 ? ''
                 : sha256.convert(certificate.der).toString();
+            if (enrolling != null) {
+              if (id != enrolling.id ||
+                  !_running ||
+                  generation != _generation) {
+                throw const HandshakeException('Enrollment key disagrees.');
+              }
+              final peer = enrolling;
+              final admitted = await _serial(() async {
+                if (!_running || generation != _generation) return false;
+                // Reserve room for configured relay-to-relay links. Neither
+                // client certificates nor advertised ports trigger dialback.
+                final reserved = min(2, _bootstrapCount);
+                final clientLinks = _links.values
+                    .where((link) => _origins[link.peerId] == 'lan')
+                    .length;
+                if (_origins[peer.id] != 'manual' &&
+                    _origins[peer.id] != 'bootstrap' &&
+                    !_links.containsKey(peer.id) &&
+                    clientLinks >= maxConnections - reserved) {
+                  return false;
+                }
+                return _admitIdentity(peer);
+              });
+              if (!admitted) {
+                throw const HandshakeException('Enrollment capacity reached.');
+              }
+            }
             if (!_running ||
                 generation != _generation ||
                 !_peers.containsKey(id)) {
@@ -1022,6 +1279,7 @@ class PeerEngine {
 
   Future<void> _dialDue() async {
     if (!_running) return;
+    _expireHelperContacts();
     _expirePendingBulletins();
     for (final link in _links.values.toList()) {
       if (_clock.elapsedMilliseconds - link.lastReceivedMs >
@@ -1114,10 +1372,25 @@ class PeerEngine {
       }
       _handshakes.add(raw);
       var expired = false;
+      StreamSubscription<RawSocketEvent>? enrollmentSubscription;
+      if (endpoint.tcpEnrollment &&
+          !nearbyOnly &&
+          (endpoint.transport == PeerTransport.ip ||
+              endpoint.transport == PeerTransport.lan)) {
+        enrollmentSubscription = await TcpEnrollment.write(
+          raw,
+          createDiscoveryBeacon(),
+        );
+        if (!_running || generation != _generation) {
+          await raw.close();
+          return;
+        }
+      }
       final handshake = RawSecureSocket.secure(
         raw,
         host: address,
         context: _context([peer]),
+        subscription: enrollmentSubscription,
         // Self-signed names do not match a numeric endpoint. Never accept any
         // certificate except the complete DER fingerprint paired by the user.
         onBadCertificate: (certificate) =>
@@ -1229,6 +1502,14 @@ class PeerEngine {
     String? endpointKey,
   }) {
     if (_cooling(peer.id)) {
+      unawaited(socket.close());
+      return;
+    }
+    if (acceptTcpEnrollment &&
+        _origins[peer.id] == 'lan' &&
+        !_links.containsKey(peer.id) &&
+        _links.values.where((link) => _origins[link.peerId] == 'lan').length >=
+            maxConnections - min(2, _bootstrapCount)) {
       unawaited(socket.close());
       return;
     }
@@ -1366,6 +1647,10 @@ class PeerEngine {
     }
     switch (frame['type']) {
       case 'inventory':
+        if (enablePeerReferrals && !nearbyOnly) {
+          await _receiveHelperContacts(link, frame['helperContacts']);
+          if (link.closed || !_running) return;
+        }
         final bulletinIds = _ids(frame['bulletins'], 256);
         final receiptIds = _ids(frame['receipts'], 128);
         final channelIds = _ids(frame['channels'] ?? <String>[], 32);
@@ -2011,6 +2296,8 @@ class PeerEngine {
       'bulletins': _store.bulletins.keys.toList().reversed.toList(),
       'receipts': page,
       'channels': channelPage,
+      if (enablePeerReferrals && !nearbyOnly)
+        'helperContacts': _contactsFor(link),
     });
   }
 
@@ -2309,6 +2596,10 @@ class PeerEngine {
       'deliveryMode': deliveryMode.name,
       'peerCount': _peers.length,
       'connectedCount': _links.length,
+      'helperContactCount': _helperContacts.length,
+      'helperContactSignatureChecks': _contactSignatureChecks,
+      'helperContactRejectedCount': _contactHintsRejected,
+      'advertisingHelper': _ownHelperContact != null,
       'bluetoothIngressPort': _bluetoothIngressPort,
       'activeTransportCounts': {
         for (final transport in PeerTransport.values)
@@ -2574,6 +2865,7 @@ class _TrafficWindow {
   int requestItems = 0;
   int invalidObjects = 0;
   int newChannels = 0;
+  int contactItems = 0;
   bool exhausted = false;
   final Set<String> loggedCategories = {};
 
@@ -2586,6 +2878,7 @@ class _TrafficWindow {
     requestItems = 0;
     invalidObjects = 0;
     newChannels = 0;
+    contactItems = 0;
     exhausted = false;
     loggedCategories.clear();
   }
@@ -2669,6 +2962,7 @@ class _Link {
   final PeerWriteQueue writer = PeerWriteQueue();
   int receiptOffset = 0;
   int channelOffset = 0;
+  int helperContactOffset = 0;
   int lastReceivedMs = 0;
   int pendingFrames = 0;
   bool closed = false;
@@ -2684,12 +2978,14 @@ class _Endpoint {
     required this.availableSinceMs,
     this.expiresAtMs,
     this.durable = false,
+    this.tcpEnrollment = false,
   });
   final String peerId, routeId;
   final PeerTransport transport;
   final InternetAddress host;
   final int port, availableSinceMs;
   final bool durable;
+  final bool tcpEnrollment;
   int? expiresAtMs;
   int failures = 0;
   int nextAttemptMs = 0;

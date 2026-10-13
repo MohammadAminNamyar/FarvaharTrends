@@ -26,6 +26,7 @@ class PeerCard {
     String host = '',
     int port = defaultPeerPort,
     required String certificatePem,
+    bool tcpEnrollment = false,
   }) {
     final cleanName = name.trim();
     if (cleanName.isEmpty ||
@@ -58,6 +59,7 @@ class PeerCard {
       port,
       certificatePem,
       Identity.certificateId(certificatePem),
+      tcpEnrollment,
     );
   }
 
@@ -67,6 +69,7 @@ class PeerCard {
     this.port,
     this.certificatePem,
     this.id,
+    this.tcpEnrollment,
   );
 
   final String name;
@@ -74,6 +77,9 @@ class PeerCard {
   final int port;
   final String certificatePem;
   final String id;
+  /// An explicit relay capability, never inferred from a remote hostname.
+  /// Ordinary peers continue to require prior certificate admission.
+  final bool tcpEnrollment;
 
   factory PeerCard.fromJson(Map<String, dynamic> json) {
     _checkJsonSize(json);
@@ -82,7 +88,8 @@ class PeerCard {
         json['name'] is! String ||
         json['certificatePem'] is! String ||
         (json.containsKey('host') && json['host'] is! String) ||
-        (json.containsKey('port') && json['port'] is! int)) {
+        (json.containsKey('port') && json['port'] is! int) ||
+        (json.containsKey('tcpEnrollment') && json['tcpEnrollment'] is! bool)) {
       throw const FormatException('Invalid peer card.');
     }
     final card = PeerCard(
@@ -90,6 +97,7 @@ class PeerCard {
       host: json['host'] as String? ?? '',
       port: json['port'] as int? ?? defaultPeerPort,
       certificatePem: json['certificatePem'] as String,
+      tcpEnrollment: json['tcpEnrollment'] as bool? ?? false,
     );
     if (json['id'] != card.id) {
       throw const FormatException('Peer certificate fingerprint disagrees.');
@@ -104,6 +112,7 @@ class PeerCard {
     'host': host,
     'port': port,
     'certificatePem': certificatePem,
+    if (tcpEnrollment) 'tcpEnrollment': true,
   };
 
   String toText() =>

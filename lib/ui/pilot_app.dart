@@ -2543,10 +2543,10 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                       t(
                         app.deliveryMode == DeliveryMode.nearbyOnly
                             ? 'فقط نزدیک · بلوتوث و وای‌فای محلی'
-                            : 'اتصال مستقیم · همهٔ شبکه‌ها',
+                            : 'اتصال خودکار · همهٔ شبکه‌ها',
                         app.deliveryMode == DeliveryMode.nearbyOnly
                             ? 'NEARBY ONLY · BLUETOOTH + LOCAL WI-FI'
-                            : 'DIRECT CONNECTION · ALL NETWORKS',
+                            : 'AUTOMATIC CONNECTION · ALL NETWORKS',
                       ),
                       style: const TextStyle(
                         color: Color(0xFFB8D5DC),
@@ -2761,20 +2761,20 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
           ),
           const SizedBox(height: 12),
           _deliveryModeOption(
-            DeliveryMode.nearbyOnly,
-            Icons.near_me_outlined,
-            t('فقط نزدیک', 'Nearby only'),
-            t('بلوتوث و وای‌فای محلی', 'Bluetooth and local Wi-Fi'),
-          ),
-          const SizedBox(height: 9),
-          _deliveryModeOption(
             DeliveryMode.allNetworks,
             Icons.public_rounded,
             t('همهٔ شبکه‌ها', 'All networks'),
             t(
-              'اینترنت، شبکهٔ داخلی و مسیرهای نزدیک؛ همتاها IP اتصال را می‌بینند.',
-              'Internet, domestic and nearby paths. Peers can see your connection IP.',
+              'خودکار: اینترنت و شبکهٔ داخلی با وای‌فای محلی و بلوتوث. همتاها IP اتصال را می‌بینند.',
+              'Automatic: Internet and domestic routes, plus local Wi-Fi and Bluetooth. Peers can see your connection IP.',
             ),
+          ),
+          const SizedBox(height: 9),
+          _deliveryModeOption(
+            DeliveryMode.nearbyOnly,
+            Icons.near_me_outlined,
+            t('فقط نزدیک', 'Nearby only'),
+            t('بلوتوث و وای‌فای محلی', 'Bluetooth and local Wi-Fi'),
           ),
           const SizedBox(height: 12),
           Text(
@@ -2784,8 +2784,8 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                     'This app will not use Internet or mobile data to connect to peers. Mobile data can stay on for other apps.',
                   )
                 : t(
-                    'برای رسیدن به همتاهای دورتر. اتصال مستقیم، IP شما را از همتای متصل و اپراتور پنهان نمی‌کند.',
-                    'Reach peers beyond your local network. Direct connections expose your connection IP to connected peers and your provider.',
+                    'با دیتای موبایل یا هر وای‌فای، مسیرهای قابل دسترس به‌طور خودکار بررسی می‌شوند. وای‌فای محلی و بلوتوث هم فعال می‌مانند. دریافت خبر به وجود همتای قابل دسترس بستگی دارد. اتصال مستقیم، IP شما را از همتای متصل و اپراتور پنهان نمی‌کند.',
+                    'Reachable routes are checked automatically on mobile data or any Wi-Fi. Local Wi-Fi and Bluetooth stay available. News still needs a reachable peer. Direct connections expose your connection IP to connected peers and your provider.',
                   ),
             key: const ValueKey('delivery-mode-explanation'),
             style: const TextStyle(fontSize: 10.5, height: 1.8, color: _muted),
@@ -2989,10 +2989,10 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
             t(
               nearbyOnly
                   ? 'انتخاب خودکار از میان مسیرهای نزدیک؛ اینترنت و دیتای موبایل برای اتصال به همتاها مسدود هستند.'
-                  : 'انتخاب خودکار به ترتیب اولویت؛ مسیرهای دیگر آمادهٔ پشتیبانی می‌مانند.',
+                  : 'انتخاب خودکار از اینترنت و شبکهٔ داخلی؛ وای‌فای محلی و بلوتوث هم برای پشتیبانی فعال می‌مانند. اتصال به همتا باید قابل دسترس باشد.',
               nearbyOnly
                   ? 'Nearby paths are selected automatically. Internet and mobile-data peer routes are blocked.'
-                  : 'Automatic priority. Other paths remain available for fallback.',
+                  : 'Internet and domestic routes are selected automatically, with local Wi-Fi and Bluetooth available for fallback. A peer must be reachable.',
             ),
             style: const TextStyle(fontSize: 10.5, height: 1.8, color: _muted),
           ),

@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pilot_platform/pilot_platform.dart';
 
 import 'android_local_wifi.dart';
+import 'core/bootstrap_config.dart';
 import 'core/identity.dart';
 import 'core/identity_roles.dart';
 import 'core/delivery_mode.dart';
@@ -35,18 +36,11 @@ String? _discoveryLockError;
 String? _nearbyError;
 
 Future<List<PeerCard>> loadBootstrapPeers() async {
-  final config =
-      jsonDecode(await rootBundle.loadString('assets/bootstrap.json')) as Map;
-  if (config['version'] != 1 || config['peers'] is! List) {
-    throw const FormatException('Invalid bundled starting-peer configuration');
-  }
-  final entries = config['peers'] as List;
-  if (entries.length > 16) {
-    throw const FormatException('Too many bundled starting peers');
-  }
-  return entries
-      .map((item) => PeerCard.fromJson(Map<String, dynamic>.from(item as Map)))
-      .toList();
+  const hasOverride = bool.hasEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
+  const override = String.fromEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
+  return parseBootstrapConfig(
+    hasOverride ? override : await rootBundle.loadString('assets/bootstrap.json'),
+  );
 }
 
 Future<void> setDiscoveryActive(bool active) async {
@@ -264,7 +258,7 @@ class AppController extends ChangeNotifier {
 
   Identity? identity;
   Identity? publisherIdentity;
-  DeliveryMode deliveryMode = DeliveryMode.nearbyOnly;
+  DeliveryMode deliveryMode = DeliveryMode.allNetworks;
   Map<String, dynamic> device = {};
   Map<String, dynamic> snapshot = {};
   Map<String, Map<String, dynamic>> nearbyStates = {};
