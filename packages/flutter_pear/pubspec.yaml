@@ -1,0 +1,16 @@
+name: flutter_pear
+description: PersianTrend's pinned Flutter Pear networking fork.
+publish_to: none
+version: 0.4.9+persiantrend.1
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_pear_bare: 0.4.9
+  crypto: ^3.0.0
+  archive: ^4.0.9
+flutter:
+  assets:
+    - assets/pear-end.bundle
