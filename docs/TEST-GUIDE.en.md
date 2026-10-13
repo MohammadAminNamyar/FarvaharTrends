@@ -40,15 +40,17 @@ Active receiving holds a partial CPU wake lock and can use extra battery. This s
 
 ## Other paths and limits
 
-Use [the network-path guide](MULTI-NETWORK-TEST.en.md) for Wi-Fi Direct, Bluetooth and optional PC tests. Select **Connection → All networks** before a Wi-Fi Direct or Internet/domestic/mobile-data test; **Nearby only** remains suitable for local Wi-Fi and Bluetooth. **The general APK currently has no provisioned reachable Internet/domestic volunteer servers.** The local-test PC's private Wi-Fi address is unreachable from unrelated mobile data. Even in All networks, switching both phones to mobile data alone therefore leaves **route unavailable** until a reachable consenting peer is provided. Ordinary testers do not need to enter addresses.
+Use [the network-path guide](MULTI-NETWORK-TEST.en.md) for Wi-Fi Direct, Bluetooth and optional PC tests. Select **Connection → All networks** for cross-network testing. Put one phone on Wi-Fi and another on mobile data; disable Bluetooth to isolate Internet discovery. Allow discovery to finish, follow the intended channel, then publish a fresh marker in each direction. No IP entry or separate helper app is required. Public discovery and NAT traversal may be blocked by a provider; record failures as well as successes. Nearby only remains available for local Wi-Fi and Bluetooth.
+
+For shutdown preparation, let phones connect before the cut and retain their app data. Compatible Wi-Fi phones automatically share signed reconnect contacts, which can also arrive over nearby links. Test with international discovery unavailable and a domestic path still present; record which phones and routes remain connected. Saved contacts do not guarantee reachability or create an external news source. A bridge with a remaining incoming connection must bring in fresh news.
 
 Use public test material only. A signature verifies its key and message integrity, not a person's identity, factual accuracy or anonymity. Following/blocking changes this phone's feed; cached public news may still be relayed. The cache is bounded: older foreign channels/news can rotate out, while recent local-authored news is protected within its own limits. Keep participant identities and connection details private. This pilot claims no nationwide or shutdown reliability.
 
 Optional instrumented developer trials are separate from verbal feedback; see [protocol limitations](PROTOCOL-LIMITATIONS.md).
 
-## Version 0.5.0: connection choices
+## Version 0.6.0: connection choices
 
-The default is **Nearby only**: Bluetooth and devices on the same local Wi-Fi. Mobile data can remain enabled for other apps; PersianTrend does not use it in this mode. Internet/domestic-network peer routes and Wi-Fi Direct are disabled. Choose **All networks** explicitly for direct network routes and Wi-Fi Direct. Direct peers see connection addresses.
+New installations default to **All networks**. Existing saved mode choices are preserved. **Nearby only** restricts PersianTrend to Bluetooth and devices on the same local Wi-Fi; mobile data may stay enabled for other apps. It disables public discovery, remote reconnect contacts, router port leases and Wi-Fi Direct. Direct peers see connection addresses. Android 10 or newer is required.
 
 Channel signing and connections now use separate persisted keys. Updating keeps existing channels and private preferences. Historical key linkage cannot be undone. Ordinary channel news has no automatic read/delivery receipts, and follow/trust choices stay local. Reading or forwarding does not establish original authorship. News from outside Iran does not itself protect readers' identities. The Connection screen has a short explanation and expandable Privacy details. No Tor is bundled.
 

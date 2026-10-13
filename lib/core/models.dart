@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'channels.dart';
+import 'channel_control.dart';
+import 'media_store.dart';
 import 'identity.dart';
 
 const int maxEnvelopeBytes = 16 * 1024;
@@ -77,6 +79,7 @@ class PeerCard {
   final int port;
   final String certificatePem;
   final String id;
+
   /// An explicit relay capability, never inferred from a remote hostname.
   /// Ordinary peers continue to require prior certificate admission.
   final bool tcpEnrollment;
@@ -138,10 +141,11 @@ class PeerCard {
 
 /// An immutable signed object. The exact payload bytes are the signing input.
 class SignedBulletin {
-  SignedBulletin._(this._envelope, this._body);
+  SignedBulletin._(this._envelope, this._body, [this.authorization]);
 
   final _Envelope _envelope;
   final Map<String, dynamic> _body;
+  final Map<String, dynamic>? authorization;
 
   factory SignedBulletin.create(
     Identity identity, {
@@ -149,9 +153,14 @@ class SignedBulletin {
     required String text,
     required int sequence,
     String? channelId,
+    ChannelControl? authorization,
+    NewsImage? image,
+    String? byline,
   }) {
     final body = <String, dynamic>{
-      'version': 1,
+      'version': authorization != null || image != null || byline != null
+          ? 2
+          : 1,
       'kind': 'bulletin',
       'nonce': _nonce(),
       'sourceId': identity.id,
@@ -160,19 +169,40 @@ class SignedBulletin {
       'seq': sequence,
       'text': text,
       'channelId': ?channelId,
+      if (authorization != null) 'authorizationId': authorization.id,
+      if (image != null) 'image': image.toJson(),
+      if (byline != null) 'byline': byline.trim(),
     };
     _validateBulletin(body);
     return SignedBulletin._(
       _Envelope.create(identity, body),
       Map.unmodifiable(body),
+      authorization?.toJson(),
     );
   }
 
   factory SignedBulletin.fromJson(Map<String, dynamic> json) {
-    final envelope = _Envelope.parse(json);
+    final proof = json['authorization'];
+    if (json.containsKey('authorization') && proof == null) {
+      throw const FormatException('Missing authorization.');
+    }
+    if (proof != null &&
+        (proof is! Map<String, dynamic> ||
+            utf8.encode(jsonEncode(proof)).length > ChannelControl.maxBytes)) {
+      throw const FormatException('Invalid bulletin authorization.');
+    }
+    final envelope = _Envelope.parse({...json}..remove('authorization'));
     final body = _jsonObject(envelope.bytes);
     _validateBulletin(body);
-    return SignedBulletin._(envelope, Map.unmodifiable(body));
+    if ((body['authorizationId'] != null) != (proof != null) ||
+        (proof != null && (proof as Map)['id'] != body['authorizationId'])) {
+      throw const FormatException('Bulletin authorization binding disagrees.');
+    }
+    return SignedBulletin._(
+      envelope,
+      Map.unmodifiable(body),
+      proof == null ? null : Map<String, dynamic>.from(proof as Map),
+    );
   }
 
   String get id => _envelope.id;
@@ -185,22 +215,65 @@ class SignedBulletin {
   String get text => _body['text'] as String;
   String get nonce => _body['nonce'] as String;
   String? get channelId => _body['channelId'] as String?;
+  NewsImage? get image => _body['image'] is Map
+      ? NewsImage.fromJson(Map<String, dynamic>.from(_body['image'] as Map))
+      : null;
+  String? get byline => _body['byline'] as String?;
+  String? get authorLabel {
+    if (byline != null) return byline;
+    if (authorization == null) return null;
+    final body = jsonDecode(
+      utf8.decode(base64Decode(authorization!['payloadBase64'] as String)),
+    ) as Map;
+    return body['kind'] == 'editor' ? body['label'] as String : null;
+  }
 
-  Map<String, dynamic> toJson() => _envelope.toJson();
+  bool get requiresModernPeer => _body['version'] == 2;
+
+  Map<String, dynamic> toJson() => {
+    ..._envelope.toJson(),
+    if (authorization != null) 'authorization': authorization,
+  };
 
   bool verifyAgainst(Map<String, PeerCard> trusted, Identity self) =>
       _verifySigner(sourceId, _envelope, trusted, self);
 
   /// Verifies publishing authority for this exact channel, even through a relay.
   /// Channel metadata identifies a key, not a trusted human/editorial source.
-  bool verifyForChannel(SignedChannel channel) =>
-      channelId == channel.id &&
-      sourceId == channel.ownerId &&
-      Identity.verify(
-        channel.ownerCertificatePem,
-        _envelope.bytes,
-        _envelope.signature,
-      );
+  bool verifyForChannel(SignedChannel channel, {ChannelControl? policy}) {
+    if (channelId != channel.id ||
+        (policy != null && !policy.permits(id, sourceId, sequence))) {
+      return false;
+    }
+    if (authorization == null) {
+      return sourceId == channel.ownerId &&
+          Identity.verify(
+            channel.ownerCertificatePem,
+            _envelope.bytes,
+            _envelope.signature,
+          );
+    }
+    try {
+      final proof = ChannelControl.parse(authorization!, channel);
+      String cert;
+      if (proof.kind == 'manager' && proof.managerId == sourceId) {
+        cert = proof.managerCertificate;
+      } else if (proof.kind == 'editor' && proof.editorId == sourceId) {
+        if (policy != null &&
+            (policy.signerId != proof.signerId ||
+                (policy.revision >= proof.revision &&
+                    !policy.activeGrants.contains(proof.id)))) {
+          return false;
+        }
+        cert = proof.editorCertificate;
+      } else {
+        return false;
+      }
+      return Identity.verify(cert, _envelope.bytes, _envelope.signature);
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// Receiver-signed evidence of verification. It is not a trusted clock attestation.
@@ -344,8 +417,37 @@ void _validateBulletin(Map<String, dynamic> body) {
     'seq',
     'text',
     if (body.containsKey('channelId')) 'channelId',
+    if (body.containsKey('authorizationId')) 'authorizationId',
+    if (body.containsKey('image')) 'image',
+    if (body.containsKey('byline')) 'byline',
   });
-  _versionAndKind(body, 'bulletin');
+  if (body['kind'] != 'bulletin' ||
+      body['version'] is! int ||
+      !{1, 2}.contains(body['version']) ||
+      (body['version'] == 1 &&
+          (body.containsKey('authorizationId') ||
+              body.containsKey('image') ||
+              body.containsKey('byline'))) ||
+      (body['version'] == 2 &&
+          (body['channelId'] == null ||
+              (!body.containsKey('authorizationId') &&
+                  !body.containsKey('image') &&
+                  !body.containsKey('byline'))))) {
+    throw const FormatException('Invalid bulletin version.');
+  }
+  if (body.containsKey('byline')) {
+    if (body['byline'] is! String) {
+      throw const FormatException('Invalid writer nickname.');
+    }
+    validateNewsByline(body['byline'] as String);
+  }
+  if (body.containsKey('authorizationId')) _requireId(body, 'authorizationId');
+  if (body.containsKey('image')) {
+    if (body['image'] is! Map) {
+      throw const FormatException('Invalid image descriptor.');
+    }
+    NewsImage.fromJson(Map<String, dynamic>.from(body['image'] as Map));
+  }
   _requireId(body, 'sourceId');
   if (body.containsKey('channelId')) _requireId(body, 'channelId');
   _requireRun(body);
@@ -471,4 +573,14 @@ String _nonce() {
   final random = Random.secure();
   return base64UrlEncode(List<int>.generate(16, (_) => random.nextInt(256)))
       .replaceAll('=', '');
+}
+
+void validateNewsByline(String value) {
+  if (value.trim() != value ||
+      value.isEmpty ||
+      value.runes.length > 60 ||
+      utf8.encode(value).length > 240 ||
+      RegExp(r'[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]').hasMatch(value)) {
+    throw const FormatException('Use a nickname of 1–60 characters.');
+  }
 }

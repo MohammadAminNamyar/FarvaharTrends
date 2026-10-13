@@ -1,12 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
 import 'channels.dart';
+import 'channel_control.dart';
+import 'channel_key_store.dart';
+import 'channel_recovery.dart';
+import 'media_store.dart';
 import 'delivery_mode.dart';
 import 'identity.dart';
 import 'local_wifi_transport.dart';
@@ -16,6 +21,9 @@ import 'peer_contact.dart';
 import 'peer_contact_store.dart';
 import 'pilot_store.dart';
 import 'tcp_enrollment.dart';
+
+part 'channel_management.dart';
+part 'media_transfer.dart';
 
 enum PeerTransport { ip, overlay, lan, wifiDirect, bluetooth }
 
@@ -38,6 +46,8 @@ class PeerEngine {
     required this.identity,
     Identity? publisherIdentity,
     this.deliveryMode = DeliveryMode.allNetworks,
+    this.channelKeys,
+    this.imageMode = 'wifiOnly',
     this.localWifiTransport,
     required this.deviceState,
     required this.onStatus,
@@ -77,6 +87,10 @@ class PeerEngine {
        );
 
   final Directory directory;
+  final ChannelKeyStore? channelKeys;
+  String imageMode;
+  late final MediaStore _media = MediaStore(directory);
+  final Map<String, _ImageDownload> _imageDownloads = {};
   final Identity identity;
   final Identity publisherIdentity;
   final DeliveryMode deliveryMode;
@@ -224,7 +238,17 @@ class PeerEngine {
   }
 
   Future<void> _load() => _loading ??= () async {
+    await channelKeys?.load();
+    _store.managedChannelIds.addAll(channelKeys?.entries.keys ?? <String>[]);
     await _store.load();
+    await _media.load();
+    await _pruneImages();
+    for (final entry
+        in channelKeys?.entries.values ?? <Map<String, dynamic>>[]) {
+      await _store.putChannel(
+        Map<String, dynamic>.from(entry['channel'] as Map),
+      );
+    }
     for (final raw in _store.channels.values) {
       final channel = SignedChannel.fromJson(raw);
       _channels[channel.id] = channel;
@@ -1704,7 +1728,12 @@ class PeerEngine {
           } catch (_) {
             // Relays may carry bad publisher objects without originating them.
             // Such content cannot establish transport misconduct by that relay.
-            if (const {'channel', 'bulletin', 'receipt'}.contains(frameType)) {
+            if (const {
+              'channel',
+              'channelPolicy',
+              'bulletin',
+              'receipt',
+            }.contains(frameType)) {
               _discardPublisherObject(link, 'invalid_publisher_object');
             } else {
               _reject(link, 'invalid_frame', protocolAbuse: true);
@@ -1724,13 +1753,48 @@ class PeerEngine {
   }
 
   Future<void> _handle(_Link link, Map<String, dynamic> frame) async {
-    if (const {'channel', 'bulletin', 'receipt'}.contains(frame['type']) &&
+    if (const {
+          'channel',
+          'channelPolicy',
+          'bulletin',
+          'receipt',
+        }.contains(frame['type']) &&
         _traffic(link.peerId).window.invalidObjects >=
             invalidPublisherObjectsPerWindow) {
       return;
     }
     switch (frame['type']) {
       case 'inventory':
+        final wasModern = link.modern;
+        if (frame['features'] is List &&
+            (frame['features'] as List).length <= 8 &&
+            (frame['features'] as List).contains('channel-v2')) {
+          link.modern = true;
+        }
+        if (link.modern && !wasModern) await _sendInventory(link);
+        final policyIds = _ids(frame['policies'] ?? <String>[], 32);
+        final knownPolicies = _store.channelPolicies.values
+            .map((v) => v['id'])
+            .toSet();
+        for (var i = 0; i < policyIds.length; i += 16) {
+          final missing = policyIds
+              .skip(i)
+              .take(16)
+              .where((id) => !knownPolicies.contains(id))
+              .toList();
+          if (missing.isNotEmpty && link.modern) {
+            await _send(link, {
+              'type': 'want',
+              'policies': missing,
+              'channels': [],
+              'bulletins': [],
+              'receipts': [],
+            });
+          }
+        }
+        if (link.modern) {
+          await _requestImages(link, _ids(frame['media'] ?? <String>[], 64));
+        }
         if (enablePeerReferrals && !nearbyOnly) {
           await _receiveHelperContacts(link, frame['helperContacts']);
           if (link.closed || !_running) return;
@@ -1764,6 +1828,25 @@ class PeerEngine {
           });
         }
       case 'want':
+        final policyIds = _ids(frame['policies'] ?? <String>[], 16);
+        if (!_allowRequests(link, policyIds.length)) return;
+        for (final id in policyIds) {
+          for (final value in _store.channelPolicies.values.where(
+            (v) => v['id'] == id,
+          )) {
+            final policyChannel = jsonDecode(
+              utf8.decode(base64Decode(value['payloadBase64'] as String)),
+            )['channelId'];
+            final metadata = _store.channels[policyChannel];
+            if (metadata != null) {
+              await _send(link, {'type': 'channel', 'value': metadata});
+            }
+            await _sendResponse(link, 'policy:$id', {
+              'type': 'channelPolicy',
+              'value': value,
+            });
+          }
+        }
         final channelIds = _ids(frame['channels'] ?? <String>[], 16);
         final bulletinIds = _ids(frame['bulletins'], 16);
         final receiptIds = _ids(frame['receipts'], 16);
@@ -1789,6 +1872,10 @@ class PeerEngine {
             final channel = _store.channels[channelId];
             if (channel != null) {
               await _send(link, {'type': 'channel', 'value': channel});
+            }
+            final policy = _store.channelPolicies[channelId];
+            if (policy != null) {
+              await _send(link, {'type': 'channelPolicy', 'value': policy});
             }
             await _sendResponse(link, 'bulletin:$id', {
               'type': 'bulletin',
@@ -1835,10 +1922,9 @@ class PeerEngine {
         }
         if (inserted) {
           _syncChannels();
-          await _broadcast({
-            'type': 'channel',
-            'value': channel.toJson(),
-          }, except: link.peerId);
+          _queueGossip([
+            {'type': 'channel', 'value': channel.toJson()},
+          ], except: link.peerId);
           _notify();
         }
         _expirePendingBulletins();
@@ -1856,6 +1942,51 @@ class PeerEngine {
             );
           }
         }
+      case 'channelPolicy':
+        final value = Map<String, dynamic>.from(frame['value'] as Map);
+        if (_store.channelPolicies.values.any((v) => v['id'] == value['id'])) {
+          return;
+        }
+        if (utf8.encode(jsonEncode(value)).length > ChannelControl.maxBytes) {
+          throw const FormatException();
+        }
+        final payload = jsonDecode(
+          utf8.decode(base64Decode(value['payloadBase64'] as String)),
+        ) as Map;
+        final channelId = payload['channelId'];
+        final raw = _store.channels[channelId];
+        if (raw == null) {
+          if (channelId is String &&
+              ChannelControl.fingerprint.hasMatch(channelId)) {
+            await _send(link, {
+              'type': 'want',
+              'channels': [channelId],
+              'bulletins': [],
+              'receipts': [],
+            });
+          }
+          return;
+        }
+        final traffic = _traffic(link.peerId);
+        if (traffic.window.channelPolicyAttempts >= 32 ||
+            _globalTraffic.channelPolicyAttempts >= 128) {
+          return;
+        }
+        traffic.window.channelPolicyAttempts++;
+        _globalTraffic.channelPolicyAttempts++;
+        final policy = ChannelControl.parse(value, SignedChannel.fromJson(raw));
+        if (policy.kind != 'policy') throw const FormatException();
+        if (await _store.putChannelPolicy(policy)) {
+          await _pruneImages();
+          _queueGossip([
+            {'type': 'channelPolicy', 'value': policy.toJson()},
+          ], except: link.peerId);
+          _notify();
+        }
+      case 'mediaWant':
+        await _serveImage(link, frame);
+      case 'mediaChunk':
+        await _receiveImage(link, frame);
       case 'bulletin':
         final value = Map<String, dynamic>.from(frame['value'] as Map);
         await _receiveBulletin(link, value);
@@ -1909,6 +2040,18 @@ class PeerEngine {
   }) async {
     final generation = _generation;
     if (!_running || link.closed) return;
+    // An already admitted content hash cannot change our cache. Drop repeats
+    // before RSA verification and native state sampling. Never trust the repeat
+    // envelope for diagnostic receipts; use the durable verified object.
+    final known = _store.bulletins[value['id']];
+    if (known != null) {
+      _duplicateCount++;
+      final saved = SignedBulletin.fromJson(known);
+      if (_isDiagnosticBulletin(saved)) {
+        await _makeReceipt(saved, await _state());
+      }
+      return;
+    }
     final transport = receivedTransport ?? link.transport;
     final arrivedAt = receivedAtWallMs ?? DateTime.now().millisecondsSinceEpoch;
     if (utf8.encode(jsonEncode(value)).length > maxEnvelopeBytes) {
@@ -1986,6 +2129,7 @@ class PeerEngine {
       // awaits its durable write, before the derived channel cache is synced.
       valid = bulletin.verifyForChannel(
         _channels[bulletin.channelId] ?? SignedChannel.fromJson(rawChannel),
+        policy: _store.policyFor(bulletin.channelId!),
       );
     } else {
       // Legacy pilot messages retain the explicit manual-pair trust boundary.
@@ -2039,17 +2183,13 @@ class PeerEngine {
         ? await _createReceipt(bulletin, await _state())
         : null;
     if (!_running || generation != _generation || link.closed) return;
-    if (bulletin.channelId != null) {
-      final currentChannel = _store.channels[bulletin.channelId];
-      if (currentChannel != null) {
-        await _broadcast({
-          'type': 'channel',
-          'value': currentChannel,
-        }, except: link.peerId);
-      }
-    }
-    if (!_running || generation != _generation || link.closed) return;
-    await _broadcast({'type': 'bulletin', 'value': value}, except: link.peerId);
+    final currentChannel = _store.channels[bulletin.channelId];
+    _queueGossip([
+      if (currentChannel != null) {'type': 'channel', 'value': currentChannel},
+      if (_store.channelPolicies[bulletin.channelId] case final policy?)
+        {'type': 'channelPolicy', 'value': policy},
+      {'type': 'bulletin', 'value': value},
+    ], except: link.peerId);
     if (receipt != null &&
         _running &&
         generation == _generation &&
@@ -2249,11 +2389,32 @@ class PeerEngine {
     String description = '',
   }) => _serial(() async {
     await _load();
+    await channelKeys?.load();
+    if (channelKeys != null &&
+        channelKeys!.entries.keys
+                .where((id) => _store.policyFor(id)?.deleted != true)
+                .length >=
+            16) {
+      throw StateError('This device can manage up to 16 channels.');
+    }
+    final owner = channelKeys == null
+        ? publisherIdentity
+        : Identity.fromJson(
+            await Isolate.run(() => Identity.generate().toJson()),
+          );
     final channel = SignedChannel.create(
-      publisherIdentity,
+      owner,
       name: name,
       description: description,
     );
+    if (channelKeys != null) {
+      await channelKeys!.put({
+        'role': 'owner',
+        'channel': channel.toJson(),
+        'identity': owner.toJson(),
+      });
+      _store.managedChannelIds.add(channel.id);
+    }
     await _store.putChannel(channel.toJson());
     _syncChannels();
     _queueGossip([
@@ -2267,27 +2428,47 @@ class PeerEngine {
     required String channelId,
     required String text,
     String runId = 'news',
+    Uint8List? imageBytes,
   }) => _serial(() async {
     await _load();
-    final raw = _store.channels[channelId];
-    if (raw == null ||
-        !(_channels[channelId] ?? SignedChannel.fromJson(raw)).ownedBy(
-          publisherIdentity,
-        )) {
-      throw StateError('Only the channel owner can publish to this channel.');
-    }
-    // Offline posts are durably queued and reconciled on the next connection.
-    await _publish(runId: runId, text: text, channelId: channelId);
+    final credentials = await _publishingCredentials(channelId);
+    final latest = _store.bulletins.values
+        .map(SignedBulletin.fromJson)
+        .where(
+          (v) => v.channelId == channelId && v.sourceId == credentials.$1.id,
+        )
+        .fold<int>(0, (v, news) => max(v, news.sequence));
+    await _store.advanceChannelSequence(channelId, latest);
+    final descriptor = imageBytes == null
+        ? null
+        : NewsImage.inspect(imageBytes);
+    if (imageBytes != null) await _media.put(descriptor!, imageBytes);
+    await _publish(
+      runId: runId,
+      text: text,
+      channelId: channelId,
+      signer: credentials.$1,
+      authorization: credentials.$2,
+      image: descriptor,
+      byline: channelKeys?.entries[channelId]?['nickname'] as String?,
+    );
   });
 
   Future<void> _publish({
     required String runId,
     required String text,
     String? channelId,
+    Identity? signer,
+    ChannelControl? authorization,
+    NewsImage? image,
+    String? byline,
   }) async {
     final state = channelId == null ? await _state() : <String, dynamic>{};
     final bulletin = SignedBulletin.create(
-      channelId == null ? identity : publisherIdentity,
+      channelId == null ? identity : signer ?? publisherIdentity,
+      authorization: authorization,
+      image: image,
+      byline: byline,
       runId: runId,
       text: text,
       sequence: channelId == null
@@ -2318,6 +2499,8 @@ class PeerEngine {
       final channel = _store.channels[channelId];
       _queueGossip([
         if (channel != null) {'type': 'channel', 'value': channel},
+        if (_store.channelPolicies[channelId] case final policy?)
+          {'type': 'channelPolicy', 'value': policy},
         {'type': 'bulletin', 'value': bulletin.toJson()},
       ]);
     } else {
@@ -2327,7 +2510,7 @@ class PeerEngine {
     _notify();
   }
 
-  void _queueGossip(List<Map<String, dynamic>> frames) {
+  void _queueGossip(List<Map<String, dynamic>> frames, {String? except}) {
     if (!_running || _links.isEmpty) return;
     if (_backgroundGossip >= 16) {
       // The durable cache and future inventories still contain this update.
@@ -2338,11 +2521,18 @@ class PeerEngine {
     _backgroundGossip++;
     unawaited(() async {
       try {
-        for (final frame in frames) {
-          if (!_running || generation != _generation) return;
-          // Keep channel metadata before its bulletin in this bounded chain.
-          await _broadcast(frame);
-        }
+        // Each link keeps metadata before news, while a slow link cannot hold
+        // up delivery to the others. Both batches and per-link writes are bounded.
+        await Future.wait(
+          _links.values.toList().where((link) => link.peerId != except).map((
+            link,
+          ) async {
+            for (final frame in frames) {
+              if (!_running || generation != _generation || link.closed) return;
+              await _send(link, frame);
+            }
+          }),
+        );
       } catch (_) {
         _lastError = 'gossip_send_failed';
         _notify();
@@ -2377,7 +2567,23 @@ class PeerEngine {
         : (channelStart + channelPage.length) % channelIds.length;
     await _send(link, {
       'type': 'inventory',
-      'bulletins': _store.bulletins.keys.toList().reversed.toList(),
+      'features': ['channel-v2'],
+      if (link.modern)
+        'policies': channelPage
+            .map((id) => _store.channelPolicies[id]?['id'])
+            .whereType<String>()
+            .toList(),
+      if (link.modern) 'media': _media.hashes,
+      'bulletins': _store.bulletins.entries
+          .where(
+            (e) =>
+                link.modern ||
+                !SignedBulletin.fromJson(e.value).requiresModernPeer,
+          )
+          .map((e) => e.key)
+          .toList()
+          .reversed
+          .toList(),
       'receipts': page,
       'channels': channelPage,
       if (enablePeerReferrals && !nearbyOnly)
@@ -2457,6 +2663,18 @@ class PeerEngine {
     Map<String, dynamic> frame, {
     bool requested = false,
   }) async {
+    if (!link.modern &&
+        (const {
+              'channelPolicy',
+              'mediaWant',
+              'mediaChunk',
+            }.contains(frame['type']) ||
+            (frame['type'] == 'bulletin' &&
+                SignedBulletin.fromJson(
+                  Map<String, dynamic>.from(frame['value'] as Map),
+                ).requiresModernPeer))) {
+      return false;
+    }
     if (link.closed || !_running) return false;
     String? channelId;
     if (frame['type'] == 'channel') {
@@ -2468,8 +2686,13 @@ class PeerEngine {
       }
     }
     final bytes = utf8.encode('${jsonEncode(frame)}\n');
-    if (bytes.length > maxFrameBytes || link.writer.pending >= 32) {
-      _reject(link, 'write_queue_limit');
+    if (bytes.length > maxFrameBytes) {
+      _lastError = 'outbound_frame_limit';
+      return false;
+    }
+    if (link.writer.pending >= 32) {
+      // Our outbound backpressure is not misconduct by the remote peer.
+      _egressDeferred++;
       return false;
     }
     final traffic = _traffic(link.peerId);
@@ -2673,6 +2896,7 @@ class PeerEngine {
   Future<Map<String, dynamic>> snapshot() async {
     await _load();
     return {
+      'channelKeyManagement': channelKeys != null,
       'running': _running,
       'activeMode': _activeMode,
       'listenPort': _port,
@@ -2740,9 +2964,12 @@ class PeerEngine {
           'sourceId': bulletin.sourceId,
           'runId': bulletin.runId,
           'text': bulletin.text,
+          'byline': bulletin.authorLabel ?? _channels[bulletin.channelId]?.name,
           'createdAtMs': bulletin.createdAtMs,
           'sequence': bulletin.sequence,
           'channelId': bulletin.channelId,
+          if (bulletin.image case final image?)
+            'image': {...image.toJson(), 'path': _media.path(image.hash)},
           'localPublication': _store.publications.containsKey(bulletin.id),
           'receivedVia': _store.publications.containsKey(bulletin.id)
               ? 'local'
@@ -2755,30 +2982,42 @@ class PeerEngine {
               'unknown',
         };
       }).toList(),
-      'channels': _channels.values.map((channel) {
-        final bulletins = _store.bulletins.values
-            .map(SignedBulletin.fromJson)
-            .where((b) => b.channelId == channel.id)
-            .toList();
-        return {
-          'id': channel.id,
-          'name': channel.name,
-          'description': channel.description,
-          'ownerId': channel.ownerId,
-          'createdAtMs': channel.createdAtMs,
-          'owned': channel.ownedBy(publisherIdentity),
-          'trust': channel.ownerId == publisherIdentity.id
-              ? 'self'
-              : _origins[channel.ownerId] == 'manual'
-              ? 'paired'
-              : 'unverified',
-          'bulletinCount': bulletins.length,
-          'lastSequence': bulletins.fold<int>(
-            0,
-            (value, b) => max(value, b.sequence),
-          ),
-        };
-      }).toList(),
+      'channels': _channels.values
+          .where((channel) => _store.policyFor(channel.id)?.deleted != true)
+          .map((channel) {
+            final bulletins = _store.bulletins.values
+                .map(SignedBulletin.fromJson)
+                .where((b) => b.channelId == channel.id)
+                .toList();
+            return {
+              'id': channel.id,
+              'name': channel.name,
+              'description': channel.description,
+              'ownerId': channel.ownerId,
+              'createdAtMs': channel.createdAtMs,
+              'owned': _isOwner(channel),
+              'canPublish': _canPublish(channel),
+              'writerNickname':
+                  channelKeys?.entries[channel.id]?['nickname'] ?? '',
+              'role': _isOwner(channel)
+                  ? 'owner'
+                  : _canPublish(channel)
+                  ? 'editor'
+                  : 'reader',
+              'editors': _editorSummary(channel.id),
+              'trust': _canPublish(channel)
+                  ? 'self'
+                  : _origins[channel.ownerId] == 'manual'
+                  ? 'paired'
+                  : 'unverified',
+              'bulletinCount': bulletins.length,
+              'lastSequence': bulletins.fold<int>(
+                0,
+                (value, b) => max(value, b.sequence),
+              ),
+            };
+          })
+          .toList(),
       'publications': _publicationResults(),
       'trials': _trialResults(),
       'events': _store.events.reversed.take(40).toList(),
@@ -2951,6 +3190,7 @@ class _TrafficWindow {
   int requestItems = 0;
   int invalidObjects = 0;
   int newChannels = 0;
+  int channelPolicyAttempts = 0;
   int contactItems = 0;
   bool exhausted = false;
   final Set<String> loggedCategories = {};
@@ -2964,6 +3204,7 @@ class _TrafficWindow {
     requestItems = 0;
     invalidObjects = 0;
     newChannels = 0;
+    channelPolicyAttempts = 0;
     contactItems = 0;
     exhausted = false;
     loggedCategories.clear();
@@ -3051,6 +3292,7 @@ class _Link {
   int helperContactOffset = 0;
   int lastReceivedMs = 0;
   int pendingFrames = 0;
+  bool modern = false;
   bool closed = false;
 }
 

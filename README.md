@@ -12,9 +12,11 @@ A Farsi-first Flutter application for following public channels and exchanging s
 - Readers choose which channels to follow, hide, block, or personally trust. These preferences remain local. Public news is cached and relayed independently of the feed, with bounded message, connection, request, and storage limits. Those limits do not defeat attackers creating many identities.
 - New news is pushed to connected peers; bounded inventories reconcile missing items on reconnection and periodically. Objects are deduplicated by signed identity rather than overwritten by a newer phone timestamp.
 
-There is no required central account service, analytics service, push notification backend, or remote configuration. Volunteer peers are real infrastructure: they forward and cache signed news and must remain reachable. The checked-in `assets/bootstrap.json` intentionally contains no starting peers. A deployment-specific APK can bundle several pinned peers through `PERSIANTREND_BOOTSTRAP_JSON`; testers do not enter addresses. Local discovery remains available alongside these peers. No public or Iranian volunteer host has been provisioned by this source checkout.
+Receiving, publishing, discovery and forwarding are in **one application**. There is no required central account service, analytics service, push notification backend, or remote configuration. In All networks, the bundled Hyperswarm transport uses its public DHT entry peers to discover other installations and attempt encrypted connections across networks automatically. Users do not enter IP addresses. This uses shared discovery infrastructure; it does not mean that there are no servers anywhere. NAT and provider restrictions can still prevent a route.
 
-Version 0.6 adds opt-in TCP enrollment on volunteer relays so a phone can establish an outbound connection without UDP discovery or inbound port forwarding. Ordinary phones still reject unknown connection certificates. See the [volunteer peer deployment guide](docs/VOLUNTEER-PEERS.en.md). Configuring a numeric address does not prove it is reachable, and two relay processes on one computer do not provide independent hosting.
+Every installation can receive and forward verified public news. On compatible Wi-Fi routers the same app also requests a short-lived TCP port lease automatically and shares a signed connection contact. Private cached contacts allow reconnection without public discovery when those phones remain reachable. Contacts can arrive over Bluetooth or local Wi-Fi as well. Nearby only disables Internet discovery, remote contacts and router leases. No separate helper app is required. Dedicated volunteer peers are optional; the checked-in `assets/bootstrap.json` is empty. See the [volunteer peer deployment guide](docs/VOLUNTEER-PEERS.en.md).
+
+During a shutdown, this requires reachable domestic routes between participating phones. A bridge with a remaining external connection must bring fresh news into that network; Bluetooth/local Wi-Fi can carry it onward. Neither cached contacts nor Hyperswarm can create a route between completely isolated networks. Iranian provider reachability and shutdown performance still require field tests.
 
 ## Privacy and platform limits
 
@@ -26,15 +28,18 @@ See [protocol limitations](docs/PROTOCOL-LIMITATIONS.md) before interpreting a c
 
 ## Build and run
 
-Install **Flutter 3.47.5 / Dart 3.13.4**, **JDK 17**, and the Android SDK, including **API 36** and its required build tools. Android minimum API is **26**. Configure your installed Flutter and Android SDK with `flutter doctor`; toolchains, downloaded dependencies, local SDK paths, signing keys, and APKs are not bundled in this repository.
+Install **Flutter 3.47.5 / Dart 3.13.4**, **JDK 17 or newer**, Node.js with npm, and the Android SDK, including **API 36** and its required build tools. Android minimum API is **29 (Android 10)**, required by the pinned native network runtime. Configure your installed Flutter and Android SDK with `flutter doctor`; toolchains, downloaded dependencies, local SDK paths, signing keys, and APKs are not bundled in this repository.
 
 From a clean checkout:
 
 ```sh
 flutter doctor
 flutter pub get
+# PowerShell: build the pinned transport bundle before Flutter builds.
+powershell -NoProfile -File tools/build-overlay.ps1
 flutter analyze
 flutter test
+node --test test/overlay_discovery_test.cjs
 flutter devices
 flutter run -d <android-device-id>
 ```
@@ -54,11 +59,15 @@ Release signing is optional local configuration. Without `.signing/key.propertie
 flutter build apk --release
 ```
 
+For a smaller sideloaded download, use `flutter build apk --release --split-per-abi`. Each resulting APK is a complete app for one CPU architecture, not a helper component. Most current phones use `arm64-v8a`; the x86_64 build is for emulators. Native libraries are compressed in the APK and extracted during installation, so installed storage is larger than download size. Runtime downloads are not required to start the app. The native dependency's approximately 400 MB archive is a build-time download, not the APK size.
+
 Keep `.signing/` private and backed up. A new signing key cannot update installations signed by someone else's key. The optional Windows helpers under `tools/` use this workstation's ignored project-local SDK layout; the standard Flutter commands above work without those helpers.
 
 iOS requires a compatible Mac, Xcode, and signing configuration. The host deployment target is iOS 15.0. Follow the [iOS bridge notes](packages/pilot_platform/ios/README.md); compilation and device behavior remain unverified.
 
 ## Testing with other people
+
+Version 0.7.0 adds password-encrypted per-channel recovery, scoped editor invitations, signed writer nicknames, owner-signed news/channel removal, local unread counts and optional notifications. Compressed images travel independently of text, with Wi-Fi-only downloads by default and no Bluetooth image transfer. See [channel and media instructions](docs/CHANNELS-AND-MEDIA.en.md) or [راهنمای فارسی کانال و تصویر](docs/CHANNELS-AND-MEDIA.fa.md). All testers should use this version for these controls.
 
 - [English field guide](docs/TEST-GUIDE.en.md)
 - [راهنمای فارسی آزمایش](docs/TEST-GUIDE.fa.md)
@@ -71,4 +80,4 @@ Use harmless, fresh test messages with consenting participants. Follow the inten
 
 `lib/core/` contains the shared protocol and storage, `lib/ui/` contains the interface, and `packages/pilot_platform/` contains the native Android/iOS bridge. `test/` and the retained `tools/tests/` helpers contain regression checks. Generated files, local caches, captures, signing material, and distribution artifacts are excluded from Git.
 
-The bundled Manrope and Vazirmatn fonts retain their SIL Open Font License files in `assets/fonts/`. The vendored background service retains its upstream MIT [license](packages/flutter_background_service_android/LICENSE). The supplied PersianTrend logo remains the project owner's asset. No project-wide source license has been declared.
+The bundled Manrope and Vazirmatn fonts retain their SIL Open Font License files in `assets/fonts/`. The vendored background service retains its upstream MIT [license](packages/flutter_background_service_android/LICENSE). The transport fork retains its [license and provenance](packages/flutter_pear/FORK.md). The supplied PersianTrend logo remains the project owner's asset. No project-wide source license has been declared.

@@ -9,8 +9,11 @@ import 'package:pilot_platform/pilot_platform.dart';
 
 import '../app_controller.dart';
 import 'channel_views.dart';
+import 'channel_tools.dart';
+import '../core/media_store.dart';
 import '../core/delivery_mode.dart';
 import '../core/models.dart';
+import '../core/news_timeline.dart';
 
 const _canvas = Color(0xFFF4F7F8);
 const _ink = Color(0xFF183F51);
@@ -127,7 +130,7 @@ class _AppState extends State<PersianTrendApp> {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: _canvas,
+          fillColor: Colors.white,
           contentPadding: const EdgeInsets.all(16),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
@@ -2062,7 +2065,9 @@ List<Map<String, dynamic>> _maps(dynamic raw) => raw is List
           .map((item) => Map<String, dynamic>.from(item))
           .toList()
     : [];
-int _number(dynamic value) => value is num ? value.toInt() : 0;
+int _number(dynamic value) => value is num && value.isFinite && value >= 0
+    ? value.toInt().clamp(0, 9007199254740991)
+    : 0;
 String _boolText(dynamic value, {required String yes, required String no}) =>
     value is bool ? (value ? yes : no) : 'Not available';
 String _short(dynamic value) {
@@ -2369,6 +2374,28 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                   ),
                 ),
                 IconButton(
+                  key: const ValueKey('reader-settings'),
+                  tooltip: t('تنظیمات خبرخوان', 'Reader settings'),
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context,
+                    showDragHandle: true,
+                    useSafeArea: true,
+                    isScrollControlled: true,
+                    builder: (context) => AnimatedBuilder(
+                      animation: app,
+                      builder: (context, _) => SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                        child: ReaderSettingsCard(app: app),
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(
+                    Icons.notifications_none_rounded,
+                    color: _muted,
+                    size: 21,
+                  ),
+                ),
+                IconButton(
                   key: const ValueKey('advanced-diagnostics'),
                   tooltip: t('ابزارهای پیشرفته', 'Advanced diagnostics'),
                   onPressed: _advanced,
@@ -2403,30 +2430,36 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
               child: RefreshIndicator(
                 color: _teal,
                 onRefresh: () => app.perform(app.refresh),
-                child: ListView(
-                  key: ValueKey('reader-$tab'),
-                  padding: EdgeInsets.fromLTRB(
-                    tab == 1 ? 12 : 22,
-                    4,
-                    tab == 1 ? 12 : 22,
-                    28,
-                  ),
-                  children: [
-                    if (app.error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 15),
-                        child: _note(
-                          Icons.error_outline_rounded,
-                          t('این کار کامل نشد', 'That action did not finish'),
-                          app.error!,
+                child: Builder(
+                  builder: (context) {
+                    final items = <Widget>[
+                      if (app.error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 15),
+                          child: _note(
+                            Icons.error_outline_rounded,
+                            t('این کار کامل نشد', 'That action did not finish'),
+                            app.error!,
+                          ),
                         ),
+                      ...switch (tab) {
+                        0 => _connection(),
+                        1 => _channels(),
+                        _ => _news(),
+                      },
+                    ];
+                    return ListView.builder(
+                      key: ValueKey('reader-$tab'),
+                      padding: EdgeInsets.fromLTRB(
+                        tab == 1 ? 12 : 22,
+                        4,
+                        tab == 1 ? 12 : 22,
+                        28,
                       ),
-                    ...switch (tab) {
-                      0 => _connection(),
-                      1 => _channels(),
-                      _ => _news(),
-                    },
-                  ],
+                      itemCount: items.length,
+                      itemBuilder: (context, index) => items[index],
+                    );
+                  },
                 ),
               ),
             ),
@@ -2461,7 +2494,11 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
             label: t('اتصال', 'Connection'),
           ),
           NavigationDestination(
-            icon: const Icon(Icons.forum_outlined, size: 21),
+            icon: Badge(
+              label: Text(n(app.unreadCount)),
+              isLabelVisible: app.unreadCount > 0,
+              child: const Icon(Icons.forum_outlined, size: 21),
+            ),
             label: t('کانال‌ها', 'Channels'),
           ),
           NavigationDestination(
@@ -2477,8 +2514,9 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
     if (_number(app.snapshot['connectedCount']) > 0) return 'connected';
     if (app.deliveryMode == DeliveryMode.allNetworks &&
         app.snapshot['overlay'] is Map &&
-        (app.snapshot['overlay'] as Map)['state'] != 'unavailable')
+        (app.snapshot['overlay'] as Map)['state'] != 'unavailable') {
       return 'searching';
+    }
     return app.snapshot['discoveryState'] as String? ?? 'waitingForBootstrap';
   }
 
@@ -2501,8 +2539,8 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
       'Finding peers over available paths and syncing news automatically.',
     ),
     'waitingForBootstrap' => t(
-      'جست‌وجوی محلی ادامه دارد. هنوز همتای شروعی برای اتصال میان شبکه‌ها تنظیم نشده است.',
-      'Local discovery continues. No starting peers are configured for connections across networks.',
+      'جست‌وجو در مسیرهای در دسترس ادامه دارد. اتصال به دستگاه‌های دیگر به وضعیت شبکه بستگی دارد.',
+      'Discovery continues over available paths. Connecting to other devices depends on network conditions.',
     ),
     _ => t(
       'برای ادامهٔ پیدا کردن همتاها، دریافت را از سر بگیرید.',
@@ -2611,7 +2649,7 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
           Expanded(
             child: _Metric(
               value: n(channels.length),
-              label: t('کانال در دسترس', 'AVAILABLE CHANNELS'),
+              label: t('کانال ذخیره‌شده', 'SAVED CHANNELS'),
               icon: Icons.grid_view_rounded,
               color: _pink,
             ),
@@ -2675,6 +2713,8 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
       ),
       const SizedBox(height: 20),
       _transportCard(),
+      const SizedBox(height: 16),
+      ReaderSettingsCard(app: app),
       const SizedBox(height: 20),
       _note(
         Icons.privacy_tip_outlined,
@@ -2929,7 +2969,15 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
       if (count > 0) return t('${n(count)} اتصال فعال', '${n(count)} active');
       if (!app.running) return t('متوقف', 'Paused');
       if (route == 'ip') {
-        return t('در انتظار همتای قابل دسترس', 'Waiting for a reachable peer');
+        final stage = (app.snapshot['overlay'] as Map?)?['discoveryStage'];
+        return stage == 'bootstrapping'
+            ? t('در حال یافتن شبکهٔ همتاها', 'Finding the peer network')
+            : stage == 'connecting'
+            ? t('در حال برقراری اتصال', 'Establishing a connection')
+            : t(
+                'جست‌وجوی خودکار همتاهای اینترنتی',
+                'Finding Internet peers automatically',
+              );
       }
       if (route == 'lan') {
         final diagnostic = app.snapshot['discoveryLastError']?.toString();
@@ -3074,13 +3122,10 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
         .where((c) => !app.isChannelBlocked(c['id'] as String))
         .toList();
     final latest = <String, Map<String, dynamic>>{};
-    for (final bulletin in bulletins) {
+    for (final bulletin in orderNews(bulletins)) {
       final id = bulletin['channelId'] as String?;
       if (id == null) continue;
-      final previous = latest[id];
-      if (previous == null || compareChannelNews(bulletin, previous) < 0) {
-        latest[id] = bulletin;
-      }
+      latest.putIfAbsent(id, () => bulletin);
     }
     final source = discoverChannels ? available : followedChannels;
     final query = _searchText(channelSearch.text);
@@ -3138,6 +3183,17 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
         ),
       ),
       const SizedBox(height: 8),
+      Align(
+        alignment: AlignmentDirectional.centerEnd,
+        child: TextButton.icon(
+          key: const ValueKey('channel-tools'),
+          onPressed: () => Navigator.of(context).push<void>(
+            MaterialPageRoute(builder: (_) => ChannelToolsPage(app: app)),
+          ),
+          icon: const Icon(Icons.key_rounded, size: 17),
+          label: Text(t('بازیابی و همکاری', 'Recovery & collaboration')),
+        ),
+      ),
       TextField(
         key: const ValueKey('channel-search'),
         controller: channelSearch,
@@ -3280,6 +3336,13 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
+                        if (app.unreadFor(id) > 0) ...[
+                          const SizedBox(width: 6),
+                          Badge(
+                            key: ValueKey('unread-$id'),
+                            label: Text(n(app.unreadFor(id))),
+                          ),
+                        ],
                         if (latest != null) ...[
                           const SizedBox(width: 6),
                           Text(
@@ -3361,7 +3424,7 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-              if (owned)
+              if (owned || channel['canPublish'] == true)
                 IconButton(
                   key: ValueKey('channel-compose-$id'),
                   tooltip: t('نوشتن خبر', 'Write news'),
@@ -3397,8 +3460,22 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                 channel: channel,
                 fa: fa,
                 trusted: trusted,
+                muted: app.isChannelMuted(id),
                 busy: app.busy,
                 onSelected: (value) {
+                  if (value == 'manage') {
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ChannelToolsPage(app: app, channelId: id),
+                      ),
+                    );
+                  }
+                  if (value == 'mute') {
+                    app.perform(
+                      () => app.setChannelMuted(id, !app.isChannelMuted(id)),
+                    );
+                  }
                   if (value == 'identity') _channelIdentity(channel);
                   if (value == 'block') _blockChannel(channel);
                   if (value == 'trust') _setChannelTrust(id, true);
@@ -3610,12 +3687,16 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
           app.isChannelFollowed(b['channelId'] as String) &&
           !app.isChannelBlocked(b['channelId'] as String),
     );
-    final visible = feed
-        .where((b) => selected == null || b['channelId'] == selected)
-        .toList();
+    final visible = orderNews(
+      feed
+          .where((b) => selected == null || b['channelId'] == selected)
+          .toList(),
+    );
     final owned = channels
         .where(
-          (c) => c['owned'] == true && !app.isChannelBlocked(c['id'] as String),
+          (c) =>
+              (c['owned'] == true || c['canPublish'] == true) &&
+              !app.isChannelBlocked(c['id'] as String),
         )
         .toList();
     return [
@@ -3754,6 +3835,11 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                     style: const TextStyle(color: _muted, fontSize: 10),
                   ),
                   const SizedBox(height: 15),
+                  if (b['image'] is Map)
+                    NewsImageView(
+                      image: Map<String, dynamic>.from(b['image'] as Map),
+                      fa: fa,
+                    ),
                   Text(
                     b['text'] as String? ?? '',
                     style: const TextStyle(
@@ -3765,6 +3851,8 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   const Divider(height: 1),
                   const SizedBox(height: 12),
+                  NewsTimes(news: b, fa: fa),
+                  const SizedBox(height: 8),
                   Text(
                     t(
                       'امضای دیجیتال معتبر · خبر عمومی',
@@ -3773,36 +3861,53 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
                     style: const TextStyle(color: _tealText, fontSize: 10),
                   ),
                   const SizedBox(height: 6),
-                  Text(switch (b['receivedVia']) {
-                    'overlay' => t(
-                      'دریافت از شبکهٔ همتاها',
-                      'Received through the peer network',
+                  if (b['byline'] is String)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 4),
+                      child: Text(
+                        t('نویسنده: ${b['byline']}', 'By ${b['byline']}'),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: _muted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                    'ip' => t(
-                      'دریافت از مسیر اینترنت / شبکهٔ داخلی',
-                      'Received via Internet / domestic IP',
-                    ),
-                    'lan' => t(
-                      'دریافت از وای‌فای محلی',
-                      'Received via local Wi-Fi',
-                    ),
-                    'wifiDirect' => t(
-                      'دریافت از وای‌فای مستقیم',
-                      'Received via Wi-Fi Direct',
-                    ),
-                    'bluetooth' => t(
-                      'دریافت از بلوتوث',
-                      'Received via Bluetooth',
-                    ),
-                    'local' => t(
-                      'منتشرشده در همین دستگاه',
-                      'Published on this device',
-                    ),
-                    _ => t(
-                      'مسیر دریافت این خبر قدیمی ثبت نشده است',
-                      'Arrival path was not recorded for this older item',
-                    ),
-                  }, style: const TextStyle(color: _muted, fontSize: 10)),
+                  if (const {
+                    'ip',
+                    'overlay',
+                    'wifiDirect',
+                    'bluetooth',
+                    'lan',
+                    'local',
+                  }.contains(b['receivedVia']))
+                    Text(switch (b['receivedVia']) {
+                      'overlay' => t(
+                        'دریافت از شبکهٔ همتاها',
+                        'Received through the peer network',
+                      ),
+                      'ip' => t(
+                        'دریافت از مسیر اینترنت / شبکهٔ داخلی',
+                        'Received via Internet / domestic IP',
+                      ),
+                      'lan' => t(
+                        'دریافت از وای‌فای محلی',
+                        'Received via local Wi-Fi',
+                      ),
+                      'wifiDirect' => t(
+                        'دریافت از وای‌فای مستقیم',
+                        'Received via Wi-Fi Direct',
+                      ),
+                      'bluetooth' => t(
+                        'دریافت از بلوتوث',
+                        'Received via Bluetooth',
+                      ),
+                      'local' => t(
+                        'منتشرشده در همین دستگاه',
+                        'Published on this device',
+                      ),
+                      _ => t('خبر ذخیره‌شده', 'Saved news'),
+                    }, style: const TextStyle(color: _muted, fontSize: 10)),
                 ],
               ),
             ),
@@ -3856,7 +3961,9 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
 
   String _channelAssessment(String id) {
     if (channels.any(
-      (channel) => channel['id'] == id && channel['owned'] == true,
+      (channel) =>
+          channel['id'] == id &&
+          (channel['owned'] == true || channel['canPublish'] == true),
     )) {
       return t('کانال شما', 'Your channel');
     }
@@ -3956,6 +4063,7 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
     ),
   );
   Future<void> _createChannel() async {
+    final before = channels.map((v) => v['id']).toSet();
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => _CreateChannelPage(app: app)),
     );
@@ -3967,6 +4075,25 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          duration: const Duration(seconds: 12),
+          action: SnackBarAction(
+            label: t('ذخیرهٔ بازیابی', 'Save recovery'),
+            onPressed: () {
+              final added = channels
+                  .where((v) => !before.contains(v['id']))
+                  .firstOrNull;
+              if (added != null) {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => ChannelToolsPage(
+                      app: app,
+                      channelId: added['id'] as String,
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
           content: Text(
             t(
               'کانال روی این دستگاه ساخته شد.',
@@ -3986,7 +4113,9 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
   Future<void> _publish(Map<String, dynamic> channel) async {
     final owned = channels
         .where(
-          (c) => c['owned'] == true && !app.isChannelBlocked(c['id'] as String),
+          (c) =>
+              (c['owned'] == true || c['canPublish'] == true) &&
+              !app.isChannelBlocked(c['id'] as String),
         )
         .toList();
     await _openComposer(owned, channel['id'] as String);
@@ -4004,7 +4133,7 @@ class _ReaderState extends State<_ReaderHome> with WidgetsBindingObserver {
               channels
                   .where(
                     (c) =>
-                        c['owned'] == true &&
+                        (c['owned'] == true || c['canPublish'] == true) &&
                         !app.isChannelBlocked(c['id'] as String),
                   )
                   .toList(),
@@ -4285,6 +4414,10 @@ class _CreateChannelPageState extends State<_CreateChannelPage> {
       submitting = true;
       submissionError = null;
     });
+    final before = (widget.app.snapshot['channels'] as List? ?? [])
+        .whereType<Map>()
+        .map((v) => v['id'])
+        .toSet();
     await widget.app.perform(
       () => widget.app.createChannel(name.text.trim(), description.text.trim()),
     );
@@ -4295,6 +4428,46 @@ class _CreateChannelPageState extends State<_CreateChannelPage> {
         submissionError = widget.app.error;
       });
     } else {
+      if (widget.app.snapshot['channelKeyManagement'] == true) {
+        final added = (widget.app.snapshot['channels'] as List? ?? [])
+            .whereType<Map>()
+            .where((v) => !before.contains(v['id']))
+            .firstOrNull;
+        final save = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(t('نسخهٔ بازیابی کانال', 'Channel recovery file')),
+            content: Text(
+              t(
+                'کانال ساخته شد. یک فایل رمزگذاری‌شده ذخیره کنید تا در صورت تعویض یا از دست رفتن گوشی، مالکیت کانال را بازیابی کنید.',
+                'Channel created. Save an encrypted file so you can recover ownership if you lose or replace this phone.',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(t('بعداً', 'Later')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(t('ذخیره با رمز', 'Save with a password')),
+              ),
+            ],
+          ),
+        );
+        if (save == true && added != null && mounted) {
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => ChannelToolsPage(
+                app: widget.app,
+                channelId: added['id'] as String,
+                startBackup: true,
+              ),
+            ),
+          );
+        }
+        if (!mounted) return;
+      }
       Navigator.of(context).pop(true);
     }
   }
@@ -4504,7 +4677,12 @@ class _ComposeNewsPage extends StatefulWidget {
 class _ComposeNewsPageState extends State<_ComposeNewsPage> {
   final form = GlobalKey<FormState>();
   final text = TextEditingController();
+  late final nickname = TextEditingController(
+    text: channel['writerNickname'] as String? ?? '',
+  );
   late String selectedId = widget.selectedId;
+  Uint8List? image;
+  bool pickingImage = false;
   bool reviewing = false;
   bool submitting = false;
   String? submissionError;
@@ -4517,11 +4695,35 @@ class _ComposeNewsPageState extends State<_ComposeNewsPage> {
   @override
   void dispose() {
     text.dispose();
+    nickname.dispose();
     super.dispose();
   }
 
+  Future<void> pickImage() async {
+    if (pickingImage || submitting) return;
+    setState(() => pickingImage = true);
+    try {
+      final bytes = await PilotPlatform.pickNewsImage();
+      if (bytes != null) {
+        NewsImage.inspect(bytes);
+        if (mounted) setState(() => image = bytes);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => submissionError = t(
+            'تصویر انتخاب نشد؛ فایل کوچک‌تری امتحان کنید.',
+            'Could not attach this image. Try a smaller file.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => pickingImage = false);
+    }
+  }
+
   Future<void> reviewOrPublish() async {
-    if (submitting || widget.app.busy) return;
+    if (submitting || widget.app.busy || pickingImage) return;
     if (!reviewing) {
       if (!form.currentState!.validate()) return;
       FocusScope.of(context).unfocus();
@@ -4532,9 +4734,18 @@ class _ComposeNewsPageState extends State<_ComposeNewsPage> {
       submitting = true;
       submissionError = null;
     });
-    await widget.app.perform(
-      () => widget.app.publishToChannel(selectedId, text.text),
-    );
+    await widget.app.perform(() async {
+      if (nickname.text.trim() !=
+          (channel['writerNickname'] as String? ?? '')) {
+        await widget.app.channelAction('setWriterNickname', {
+          'channelId': selectedId,
+          'nickname': nickname.text,
+        });
+      }
+      await (image == null
+          ? widget.app.publishToChannel(selectedId, text.text)
+          : widget.app.publishNewsWithImage(selectedId, text.text, image!));
+    });
     if (!mounted) return;
     if (widget.app.error != null) {
       setState(() {
@@ -4608,14 +4819,18 @@ class _ComposeNewsPageState extends State<_ComposeNewsPage> {
                       .toList(),
                   onChanged: submitting
                       ? null
-                      : (value) => setState(() => selectedId = value!),
+                      : (value) => setState(() {
+                          selectedId = value!;
+                          nickname.text =
+                              channel['writerNickname'] as String? ?? '';
+                        }),
                 ),
                 const SizedBox(height: 22),
                 TextFormField(
                   key: const ValueKey('news-text'),
                   controller: text,
-                  minLines: 8,
-                  maxLines: 16,
+                  minLines: 6,
+                  maxLines: 14,
                   enabled: !submitting,
                   keyboardType: TextInputType.multiline,
                   onChanged: (_) => setState(() => submissionError = null),
@@ -4643,6 +4858,77 @@ class _ComposeNewsPageState extends State<_ComposeNewsPage> {
                       );
                     }
                     return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                if (!reviewing)
+                  OutlinedButton.icon(
+                    key: const ValueKey('attach-news-image'),
+                    onPressed: submitting || pickingImage ? null : pickImage,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    label: Text(
+                      pickingImage
+                          ? t('فشرده‌سازی تصویر…', 'Compressing image…')
+                          : t('افزودن تصویر اختیاری', 'Attach optional image'),
+                    ),
+                  ),
+                if (image != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.memory(
+                      image!,
+                      height: 180,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          t(
+                            'تصویر فشرده · ${((image!.length) / 1024).ceil()} کیلوبایت',
+                            'Compressed image · ${((image!.length) / 1024).ceil()} KB',
+                          ),
+                          style: const TextStyle(fontSize: 11, color: _muted),
+                        ),
+                      ),
+                      if (!reviewing)
+                        IconButton(
+                          tooltip: t('حذف تصویر', 'Remove image'),
+                          onPressed: () => setState(() => image = null),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                const SizedBox(height: 16),
+                TextFormField(
+                  key: const ValueKey('writer-nickname'),
+                  controller: nickname,
+                  maxLength: 60,
+                  enabled: !submitting,
+                  decoration: InputDecoration(
+                    labelText: t(
+                      'نام مستعار نویسنده (اختیاری)',
+                      'Writer nickname (optional)',
+                    ),
+                    helperText: t(
+                      'زیر خبر نمایش داده می‌شود؛ نام واقعی لازم نیست.',
+                      'Shown below your news; no real name is required.',
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) return null;
+                    try {
+                      validateNewsByline(value.trim());
+                      return null;
+                    } catch (_) {
+                      return t(
+                        'نام کوتاه و تک‌خطی وارد کنید.',
+                        'Enter a short, single-line nickname.',
+                      );
+                    }
                   },
                 ),
                 const SizedBox(height: 12),
@@ -4680,6 +4966,28 @@ class _ComposeNewsPageState extends State<_ComposeNewsPage> {
                         style: const TextStyle(fontSize: 10, color: _tealText),
                       ),
                       const Divider(height: 28),
+                      if (nickname.text.trim().isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(
+                            t(
+                              'نویسنده: ${nickname.text.trim()}',
+                              'By ${nickname.text.trim()}',
+                            ),
+                            style: const TextStyle(color: _muted, fontSize: 12),
+                          ),
+                        ),
+                      if (image != null) ...[
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.memory(
+                            image!,
+                            height: 180,
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
                       SelectableText(
                         text.text,
                         key: const ValueKey('news-review-text'),

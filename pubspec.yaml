@@ -1,7 +1,7 @@
 name: persian_trend
 description: "PersianTrend — a signed bulletin delivery pilot with no required central server."
 publish_to: 'none'
-version: 0.6.0+9
+version: 0.8.0+11
 
 environment:
   sdk: ^3.13.4

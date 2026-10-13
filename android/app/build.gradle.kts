@@ -11,6 +11,12 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    // Sideloaded APKs must be practical to share over limited connections.
+    // Android extracts compressed libraries at install time.
+    packaging {
+        jniLibs.useLegacyPackaging = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

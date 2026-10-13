@@ -81,8 +81,9 @@ void main() {
   Future<void> until(Future<bool> Function() condition) async {
     final deadline = DateTime.now().add(const Duration(seconds: 8));
     while (!await condition()) {
-      if (DateTime.now().isAfter(deadline))
+      if (DateTime.now().isAfter(deadline)) {
         fail('Overlay admission condition timed out');
+      }
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
   }

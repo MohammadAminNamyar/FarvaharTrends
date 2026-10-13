@@ -1,23 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
+import '../core/news_timeline.dart';
+import 'channel_tools.dart';
 
 const _ink = Color(0xFF183F51);
 const _muted = Color(0xFF5A717C);
 const _teal = Color(0xFF267E7B);
-
-/// Sequence is authoritative within a channel, even after out-of-order catch-up.
-int compareChannelNews(Map<String, dynamic> a, Map<String, dynamic> b) {
-  final aSequence = a['sequence'];
-  final bSequence = b['sequence'];
-  if (aSequence is int && bSequence is int && aSequence != bSequence) {
-    return bSequence.compareTo(aSequence);
-  }
-  final time = (b['createdAtMs'] as int? ?? 0).compareTo(
-    a['createdAtMs'] as int? ?? 0,
-  );
-  return time != 0 ? time : '${a['id']}'.compareTo('${b['id']}');
-}
 
 String channelActivityTime(BuildContext context, dynamic value, bool fa) {
   if (value is! int || value.abs() > 8640000000000000) return '';
@@ -80,10 +71,11 @@ class ChannelOptions extends StatelessWidget {
     required this.fa,
     required this.trusted,
     required this.busy,
+    this.muted = false,
     required this.onSelected,
   });
   final Map<String, dynamic> channel;
-  final bool fa, trusted, busy;
+  final bool fa, trusted, busy, muted;
   final ValueChanged<String> onSelected;
   String t(String f, String e) => fa ? f : e;
 
@@ -118,6 +110,21 @@ class ChannelOptions extends StatelessWidget {
                 context: context,
                 position: position,
                 items: [
+                  if (channel['owned'] == true)
+                    PopupMenuItem(
+                      value: 'manage',
+                      child: Text(
+                        t('مدیریت و بازیابی کانال', 'Manage & recover channel'),
+                      ),
+                    ),
+                  PopupMenuItem(
+                    value: 'mute',
+                    child: Text(
+                      muted
+                          ? t('فعال‌کردن اعلان کانال', 'Unmute channel')
+                          : t('بی‌صدا کردن کانال', 'Mute channel'),
+                    ),
+                  ),
                   if (channel['owned'] != true)
                     PopupMenuItem(
                       key: ValueKey(
@@ -170,7 +177,84 @@ class ChannelNewsPage extends StatefulWidget {
   State<ChannelNewsPage> createState() => _ChannelNewsPageState();
 }
 
-class _ChannelNewsPageState extends State<ChannelNewsPage> {
+class _ChannelNewsPageState extends State<ChannelNewsPage>
+    with WidgetsBindingObserver {
+  String _readStamp = '';
+  bool _marking = false;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _readStamp = '';
+      setState(() {});
+    }
+  }
+
+  void _markVisible(List<Map<String, dynamic>> news) {
+    if (WidgetsBinding.instance.lifecycleState != null &&
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    if (ModalRoute.of(context)?.isCurrent != true || _marking) return;
+    final stamp = news.map((v) => v['id']).join(',');
+    if (stamp == _readStamp) return;
+    _readStamp = stamp;
+    _marking = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+          await app.markChannelRead(widget.channelId);
+        }
+      } finally {
+        _marking = false;
+      }
+    });
+  }
+
+  Future<void> _remove(String id) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t('حذف خبر از کانال؟', 'Remove this news?')),
+        content: Text(
+          t(
+            'دستگاه‌های به‌روز پس از دریافت دستور امضاشده، خبر را پنهان می‌کنند و دیگر نمی‌فرستند. نسخه‌های ذخیره‌شده یا تصویربرداری‌شده پاک نمی‌شوند.',
+            'Updated devices will hide this post and stop forwarding it when they receive the signed removal. Saved copies and screenshots cannot be erased.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('انصراف', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('حذف خبر', 'Remove news')),
+          ),
+        ],
+      ),
+    );
+    if (approved == true) {
+      await app.perform(
+        () => app.channelAction('removePublishedNews', {
+          'channelId': widget.channelId,
+          'newsId': id,
+        }),
+      );
+    }
+  }
+
   bool savingTrust = false;
   String? trustError;
   AppController get app => widget.app;
@@ -179,7 +263,21 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
 
   Future<void> _action(String action, Map<String, dynamic> channel) async {
     if (app.busy || savingTrust) return;
-    if (action == 'identity') {
+    if (action == 'manage') {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              ChannelToolsPage(app: app, channelId: widget.channelId),
+        ),
+      );
+    } else if (action == 'mute') {
+      await app.perform(
+        () => app.setChannelMuted(
+          widget.channelId,
+          !app.isChannelMuted(widget.channelId),
+        ),
+      );
+    } else if (action == 'identity') {
       await widget.onIdentity(channel);
     } else if (action == 'block') {
       await widget.onBlock(channel);
@@ -226,14 +324,15 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
         );
       }
       final owned = channel['owned'] == true;
+      final canPublish = owned || channel['canPublish'] == true;
       final followed = app.isChannelFollowed(widget.channelId);
       final trusted = app.isChannelTrusted(widget.channelId);
-      final news =
-          (app.snapshot['bulletins'] as List? ?? const [])
-              .cast<Map<String, dynamic>>()
-              .where((b) => b['channelId'] == widget.channelId)
-              .toList()
-            ..sort(compareChannelNews);
+      final news = orderNews(
+        (app.snapshot['bulletins'] as List? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .where((b) => b['channelId'] == widget.channelId),
+      );
+      _markVisible(news);
       final assessment = owned
           ? t('کانال شما', 'Your channel')
           : trusted
@@ -282,6 +381,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
               channel: channel,
               fa: fa,
               trusted: trusted,
+              muted: app.isChannelMuted(widget.channelId),
               busy: app.busy || savingTrust,
               onSelected: (v) => _action(v, channel),
             ),
@@ -352,6 +452,13 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  if (b['image'] is Map)
+                                    NewsImageView(
+                                      image: Map<String, dynamic>.from(
+                                        b['image'] as Map,
+                                      ),
+                                      fa: fa,
+                                    ),
                                   SelectableText(
                                     b['text'] as String? ?? '',
                                     style: const TextStyle(
@@ -360,17 +467,46 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
                                       height: 1.8,
                                     ),
                                   ),
+                                  if (b['byline'] is String &&
+                                      (b['byline'] as String).isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 14),
+                                      child: Text(
+                                        t(
+                                          'نویسنده: ${b['byline']}',
+                                          'By ${b['byline']}',
+                                        ),
+                                        key: ValueKey('news-byline-${b['id']}'),
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: _muted,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
                                   const SizedBox(height: 16),
-                                  Text(
-                                    channelActivityTime(
-                                      context,
-                                      b['createdAtMs'],
-                                      fa,
-                                    ),
-                                    style: const TextStyle(
-                                      color: _muted,
-                                      fontSize: 10,
-                                    ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: NewsTimes(news: b, fa: fa),
+                                      ),
+                                      if (owned)
+                                        IconButton(
+                                          key: ValueKey(
+                                            'remove-news-${b['id']}',
+                                          ),
+                                          tooltip: t('حذف خبر', 'Remove news'),
+                                          onPressed: app.busy
+                                              ? null
+                                              : () =>
+                                                    _remove(b['id'] as String),
+                                          icon: const Icon(
+                                            Icons.delete_outline_rounded,
+                                            size: 19,
+                                            color: _muted,
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
@@ -384,13 +520,21 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  Text(
-                                    _arrival(b['receivedVia']),
-                                    style: const TextStyle(
-                                      color: _muted,
-                                      fontSize: 10,
+                                  if (const {
+                                    'ip',
+                                    'overlay',
+                                    'wifiDirect',
+                                    'bluetooth',
+                                    'lan',
+                                    'local',
+                                  }.contains(b['receivedVia']))
+                                    Text(
+                                      _arrival(b['receivedVia']),
+                                      style: const TextStyle(
+                                        color: _muted,
+                                        fontSize: 10,
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ),
@@ -405,7 +549,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
           child: Container(
             color: Colors.white,
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-            child: owned
+            child: canPublish
                 ? FilledButton.icon(
                     key: const ValueKey('channel-compose-news'),
                     onPressed: app.busy
@@ -454,6 +598,10 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
   );
 
   String _arrival(dynamic route) => switch (route) {
+    'overlay' => t(
+      'دریافت از شبکهٔ همتاها',
+      'Received through the peer network',
+    ),
     'ip' => t(
       'دریافت از مسیر اینترنت / شبکهٔ داخلی',
       'Received via Internet / domestic IP',
@@ -462,9 +610,117 @@ class _ChannelNewsPageState extends State<ChannelNewsPage> {
     'wifiDirect' => t('دریافت از وای‌فای مستقیم', 'Received via Wi-Fi Direct'),
     'bluetooth' => t('دریافت از بلوتوث', 'Received via Bluetooth'),
     'local' => t('منتشرشده در همین دستگاه', 'Published on this device'),
-    _ => t(
-      'مسیر دریافت این خبر قدیمی ثبت نشده است',
-      'Arrival path was not recorded for this older item',
-    ),
+    _ => t('خبر ذخیره‌شده', 'Saved news'),
   };
+}
+
+class NewsImageView extends StatelessWidget {
+  const NewsImageView({super.key, required this.image, required this.fa});
+  final Map<String, dynamic> image;
+  final bool fa;
+  @override
+  Widget build(BuildContext context) {
+    final path = image['path'];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 360),
+          child: path is String
+              ? Image.file(
+                  File(path),
+                  width: double.infinity,
+                  fit: BoxFit.contain,
+                  cacheWidth: 1280,
+                  errorBuilder: (_, _, _) =>
+                      Text(fa ? 'تصویر در دسترس نیست' : 'Image unavailable'),
+                )
+              : Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  color: const Color(0xFFF0F5F5),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.image_outlined, color: _muted),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          fa ? 'تصویر اختیاری · با اتصال مناسب دریافت می‌شود' : 'Optional image · downloads on an allowed connection',
+                          style: const TextStyle(color: _muted, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Send time is signed by the writer; receive time stays on this phone.
+class NewsTimes extends StatelessWidget {
+  const NewsTimes({super.key, required this.news, required this.fa});
+  final Map<String, dynamic> news;
+  final bool fa;
+
+  String _digits(String text) => fa
+      ? text.replaceAllMapped(
+          RegExp('[0-9]'),
+          (m) => '۰۱۲۳۴۵۶۷۸۹'[int.parse(m[0]!)],
+        )
+      : text;
+
+  String _stamp(dynamic value) {
+    if (value is! int || value < 0 || value > 253402300799999) {
+      return fa ? 'ثبت نشده' : 'Unavailable';
+    }
+    final date = DateTime.fromMillisecondsSinceEpoch(
+      value,
+      isUtc: true,
+    ).toLocal();
+    final zone = date.timeZoneOffset;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return _digits(
+      '${date.year}/${two(date.month)}/${two(date.day)} '
+      '${two(date.hour)}:${two(date.minute)}:${two(date.second)} '
+      'UTC${zone.isNegative ? '-' : '+'}${two(zone.inMinutes.abs() ~/ 60)}:'
+      '${two(zone.inMinutes.abs() % 60)}',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final local = news['receivedVia'] == 'local';
+    return Tooltip(
+      message: fa
+          ? 'زمان‌ها در منطقهٔ زمانی همین گوشی نمایش داده می‌شوند. ارسال از ساعت نویسنده و دریافت از ساعت این گوشی است؛ اختلافشان زمان قطعی انتقال نیست.'
+          : 'Both times use this phone’s timezone. Sent uses the writer’s clock; received uses this phone’s clock. Their difference is not a measured delivery duration.',
+      child: Semantics(
+        container: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${fa ? 'ارسال' : 'Sent'}: ${_stamp(news['createdAtMs'])}',
+              key: ValueKey('sent-time-${news['id']}'),
+              style: const TextStyle(color: _muted, fontSize: 10, height: 1.7),
+            ),
+            if (!local)
+              Text(
+                '${fa ? 'دریافت در این گوشی' : 'Received on this phone'}: '
+                '${_stamp(news['receivedAtWallMs'])}',
+                key: ValueKey('received-time-${news['id']}'),
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 10,
+                  height: 1.7,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

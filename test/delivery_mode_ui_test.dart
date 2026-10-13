@@ -124,7 +124,7 @@ void main() {
         find.byKey(const ValueKey('transport-priority-card')),
       );
       expect(find.text('1. Internet / domestic IP'), findsOneWidget);
-      expect(find.text('Waiting for a reachable peer'), findsOneWidget);
+      expect(find.text('Finding Internet peers automatically'), findsOneWidget);
       expect(
         find.textContaining('local Wi-Fi and Bluetooth available for fallback'),
         findsOneWidget,

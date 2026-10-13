@@ -15,6 +15,8 @@ import 'package:pilot_platform/pilot_platform.dart';
 import 'android_local_wifi.dart';
 import 'core/bootstrap_config.dart';
 import 'core/identity.dart';
+import 'core/channel_key_store.dart';
+import 'core/reader_state.dart';
 import 'core/identity_roles.dart';
 import 'core/delivery_mode.dart';
 import 'core/delivery_mode_store.dart';
@@ -69,6 +71,18 @@ final _identityRolesBootstrap = IdentityRolesBootstrap(
   release: Platform.isAndroid ? PilotPlatform.releaseIdentityLease : null,
 );
 
+ChannelKeyStore channelKeyVault() => ChannelKeyStore(
+  read: () => _vault.read(key: 'channelKeysV1'),
+  write: (value) => _vault.write(key: 'channelKeysV1', value: value),
+  acquire: Platform.isAndroid ? PilotPlatform.acquireIdentityLease : null,
+  release: Platform.isAndroid ? PilotPlatform.releaseIdentityLease : null,
+);
+ReaderState readerState(Directory directory) => ReaderState(
+  directory,
+  acquire: Platform.isAndroid ? PilotPlatform.acquireIdentityLease : null,
+  release: Platform.isAndroid ? PilotPlatform.releaseIdentityLease : null,
+);
+
 Future<IdentityRoles> loadIdentityRoles() => _identityRolesBootstrap.load();
 
 /// The peer card always uses the connection key, never the publisher key.
@@ -109,6 +123,61 @@ void serviceMain(ServiceInstance service) async {
   NearbyTransports? nearby;
   InternetOverlay? overlay;
   PhoneHelper? helper;
+  ReaderState? reader;
+  String readerLanguage = 'fa';
+  Map<String, dynamic>? latestReaderSnapshot;
+  bool processingReader = false;
+  Future<void> updateReader(Map<String, dynamic> value) async {
+    latestReaderSnapshot = value;
+    if (processingReader || reader == null) return;
+    processingReader = true;
+    try {
+      while (latestReaderSnapshot != null) {
+        final next = latestReaderSnapshot!;
+        latestReaderSnapshot = null;
+        final preferences = ChannelPreferences(reader.directory);
+        await preferences.load();
+        final followed = <String>{...preferences.followed};
+        for (final channel in next['channels'] as List? ?? []) {
+          if (channel is Map &&
+              channel['canPublish'] == true &&
+              channel['id'] is String) {
+            followed.add(channel['id'] as String);
+          }
+        }
+        final news = (next['bulletins'] as List? ?? [])
+            .whereType<Map>()
+            .map((v) => Map<String, dynamic>.from(v))
+            .toList();
+        final arrivals = await reader!.observe(
+          news,
+          followed,
+          preferences.blocked,
+        );
+        engine?.imageMode = reader!.images;
+        final count = news
+            .where(
+              (v) =>
+                  followed.contains(v['channelId']) &&
+                  !preferences.blocked.contains(v['channelId']) &&
+                  !reader!.muted.contains(v['channelId']) &&
+                  !reader.readIds.contains(v['id']),
+            )
+            .length;
+        await PilotPlatform.postNewsNotification(
+          reader!.notifications ? count : 0,
+          readerLanguage,
+          alert: arrivals.isNotEmpty,
+        );
+        service.invoke('readerChanged', {});
+      }
+    } catch (_) {
+      service.invoke('readerChanged', {});
+    } finally {
+      processingReader = false;
+    }
+  }
+
   Map<String, dynamic> overlayState = {'state': 'starting'};
   final probe = DeviceProbe(readDeviceState);
   const cacheOnlyTest =
@@ -126,6 +195,7 @@ void serviceMain(ServiceInstance service) async {
     queue = queue.then((_) async {
       try {
         await initialized.future;
+        dynamic result;
         switch (command['action']) {
           case 'snapshot':
             await nearby?.refresh();
@@ -165,7 +235,59 @@ void serviceMain(ServiceInstance service) async {
             await engine!.publishToChannel(
               channelId: command['channelId'] as String,
               text: command['text'] as String,
+              imageBytes: command['image'] is String
+                  ? base64Decode(command['image'] as String)
+                  : null,
             );
+          case 'exportChannelRecovery':
+            result = await engine!.exportChannelRecovery(
+              command['channelId'] as String,
+              command['password'] as String,
+            );
+          case 'restoreChannelRecovery':
+            result = await engine!.restoreChannelRecovery(
+              command['file'] as String,
+              command['password'] as String,
+            );
+          case 'createEditorRequest':
+            result = await engine!.createEditorRequest(
+              command['label'] as String,
+            );
+          case 'inspectEditorRequest':
+            result = jsonEncode(
+              engine!.inspectEditorRequest(command['file'] as String),
+            );
+          case 'approveEditor':
+            result = await engine!.approveEditor(
+              command['channelId'] as String,
+              command['file'] as String,
+            );
+          case 'acceptEditorInvitation':
+            result = await engine!.acceptEditorInvitation(
+              command['file'] as String,
+            );
+          case 'removeChannel':
+            await engine!.removeChannel(command['channelId'] as String);
+          case 'setWriterNickname':
+            await engine!.setWriterNickname(
+              command['channelId'] as String,
+              command['nickname'] as String,
+            );
+          case 'revokeEditor':
+            await engine!.revokeEditor(
+              command['channelId'] as String,
+              command['grantId'] as String,
+            );
+          case 'removePublishedNews':
+            await engine!.removePublishedNews(
+              command['channelId'] as String,
+              command['newsId'] as String,
+            );
+          case 'readerSettings':
+            readerLanguage = command['language'] as String? ?? 'fa';
+            await reader?.load();
+            if (reader != null) engine!.imageMode = reader.images;
+            await updateReader(await engine!.snapshot());
           case 'export':
             service.invoke('report', {
               'requestId': command['requestId'],
@@ -191,7 +313,10 @@ void serviceMain(ServiceInstance service) async {
             }
             await setDiscoveryActive(false);
             if (stopError == null) {
-              service.invoke('completed', {'requestId': command['requestId']});
+              service.invoke('completed', {
+                'requestId': command['requestId'],
+                'result': result,
+              });
             } else {
               service.invoke('failure', {
                 'message': 'Receiving stopped with a storage error.',
@@ -208,7 +333,10 @@ void serviceMain(ServiceInstance service) async {
             'overlay': overlayState,
           });
         }
-        service.invoke('completed', {'requestId': command['requestId']});
+        service.invoke('completed', {
+          'requestId': command['requestId'],
+          'result': result,
+        });
       } catch (error) {
         service.invoke('failure', {
           'message': error.toString(),
@@ -220,7 +348,17 @@ void serviceMain(ServiceInstance service) async {
   try {
     final directory = await pilotDirectory();
     final identities = await loadIdentityRoles();
+    readerLanguage =
+        (await DisplaySettingsStore(
+          directory,
+          identities.connection,
+        ).load())?['languageCode'] ??
+        'fa';
+    reader = readerState(directory);
+    await reader.load();
     engine = PeerEngine(
+      channelKeys: channelKeyVault(),
+      imageMode: reader.images,
       directory: directory,
       identity: identities.connection,
       publisherIdentity: identities.publisher,
@@ -235,7 +373,8 @@ void serviceMain(ServiceInstance service) async {
       enableUdpDiscovery: !cacheOnlyTest,
       deviceState: readDeviceState,
       onStatus: (value) {
-        probe.record(value);
+        probe.record({...value, 'overlay': overlayState});
+        unawaited(updateReader(value));
         service.invoke('status', {...value, 'overlay': overlayState});
       },
     );
@@ -253,14 +392,26 @@ void serviceMain(ServiceInstance service) async {
     if (!engine.nearbyOnly) {
       helper = PhoneHelper(engine);
       await helper.start();
-      if (!cacheOnlyTest)
+      if (!cacheOnlyTest) {
         overlay = InternetOverlay(
           engine,
+          networkKey: () async {
+            final state = await readDeviceState();
+            return state['stateUnavailable'] == true
+                ? null
+                : state['activeNetworkEpoch'] as String?;
+          },
           onState: (value) {
             overlayState = value;
+            unawaited(
+              engine!.snapshot().then(
+                (v) => probe.record({...v, 'overlay': value}),
+              ),
+            );
             service.invoke('overlayStatus', value);
           },
         );
+      }
       await overlay?.start();
     } else {
       overlayState = {'state': 'disabled'};
@@ -328,9 +479,10 @@ class AppController extends ChangeNotifier {
   NearbyTransports? _localNearby;
   Directory? _directory;
   ChannelPreferences? _channelPreferences;
+  ReaderState? _reader;
   final _service = FlutterBackgroundService();
   final List<StreamSubscription<dynamic>> _subscriptions = [];
-  final Map<String, Completer<void>> _commands = {};
+  final Map<String, Completer<dynamic>> _commands = {};
   final Map<String, Completer<String>> _exports = {};
   final String _sessionId = base64UrlEncode(
     List<int>.generate(12, (_) => Random.secure().nextInt(256)),
@@ -362,6 +514,8 @@ class AppController extends ChangeNotifier {
       _ensureAlive();
       _channelPreferences = ChannelPreferences(_directory!);
       await _channelPreferences!.load();
+      _reader = readerState(_directory!);
+      await _reader!.load();
       _ensureAlive();
       final identities = await loadIdentityRoles();
       identity = identities.connection;
@@ -379,6 +533,11 @@ class AppController extends ChangeNotifier {
       }
       if (Platform.isAndroid) {
         _subscriptions.add(
+          _service.on('readerChanged').listen((_) {
+            unawaited(_refreshReader());
+          }),
+        );
+        _subscriptions.add(
           _service.on('nearbyStatus').listen((data) {
             if (_disposed) return;
             if (data?['transport'] is String && data?['state'] is Map) {
@@ -393,6 +552,7 @@ class AppController extends ChangeNotifier {
             if (_disposed) return;
             if (data != null) {
               snapshot = data;
+              unawaited(_refreshReader());
               notifyListeners();
             }
           }),
@@ -430,7 +590,9 @@ class AppController extends ChangeNotifier {
           _service
               .on('completed')
               .listen(
-                (data) => _commands.remove(data?['requestId'])?.complete(),
+                (data) => _commands
+                    .remove(data?['requestId'])
+                    ?.complete(data?['result']),
               ),
         );
         _subscriptions.add(
@@ -513,6 +675,8 @@ class AppController extends ChangeNotifier {
     if (_engineFactory != null) return _engineFactory!();
     return PeerEngine(
       directory: _directory!,
+      channelKeys: channelKeyVault(),
+      imageMode: _reader?.images ?? 'wifiOnly',
       identity: identity!,
       publisherIdentity: publisherIdentity!,
       deliveryMode: deliveryMode,
@@ -848,6 +1012,7 @@ class AppController extends ChangeNotifier {
         ).save({'label': label, 'host': advertisedHost, 'languageCode': value});
       }
       languageCode = value;
+      await _readerSettingsChanged();
       notifyListeners();
     });
   }
@@ -859,7 +1024,9 @@ class AppController extends ChangeNotifier {
     final followed = <String>{...?_channelPreferences?.followed};
     for (final value in snapshot['channels'] as List? ?? const []) {
       if (value is Map &&
-          value['ownerId'] == publisherIdentity?.id &&
+          (value['ownerId'] == publisherIdentity?.id ||
+              value['canPublish'] == true ||
+              value['owned'] == true) &&
           value['id'] is String) {
         followed.add(value['id'] as String);
       }
@@ -872,8 +1039,11 @@ class AppController extends ChangeNotifier {
   bool isChannelTrusted(String id) =>
       _channelPreferences?.isTrusted(id) ?? false;
 
-  Future<void> followChannel(String id) =>
-      _changeChannelPreference((prefs) => prefs.follow(id));
+  Future<void> followChannel(String id) async {
+    await markChannelRead(id);
+    await _changeChannelPreference((prefs) => prefs.follow(id));
+  }
+
   Future<void> unfollowChannel(String id) =>
       _changeChannelPreference((prefs) => prefs.unfollow(id));
   Future<void> blockChannel(String id) =>
@@ -894,6 +1064,7 @@ class AppController extends ChangeNotifier {
       throw StateError('Channel preferences are not ready');
     }
     await change(preferences);
+    await _readerSettingsChanged();
     notifyListeners();
   }
 
@@ -919,6 +1090,163 @@ class AppController extends ChangeNotifier {
       snapshot = await _local!.snapshot();
     }
     notifyListeners();
+  }
+
+  bool get newsNotifications => _reader?.notifications ?? true;
+  String get imageMode => _reader?.images ?? 'wifiOnly';
+  bool isChannelMuted(String id) => _reader?.muted.contains(id) ?? false;
+  int unreadFor(String id) => (snapshot['bulletins'] as List? ?? [])
+      .whereType<Map>()
+      .where(
+        (v) =>
+            v['channelId'] == id &&
+            v['receivedVia'] != 'local' &&
+            v['localPublication'] != true &&
+            !(_reader?.readIds.contains(v['id']) ?? true) &&
+            isChannelFollowed(id),
+      )
+      .length;
+  int get unreadCount =>
+      followedChannelIds.fold(0, (count, id) => count + unreadFor(id));
+  Future<void> _refreshReader() async {
+    try {
+      await _reader?.load();
+      if (!Platform.isAndroid || !activeMode) {
+        await _reader?.observe(
+          (snapshot['bulletins'] as List? ?? [])
+              .whereType<Map>()
+              .map((v) => Map<String, dynamic>.from(v))
+              .toList(),
+          followedChannelIds,
+          blockedChannelIds,
+        );
+      }
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> markChannelRead(String id) async {
+    await _reader?.markRead(
+      (snapshot['bulletins'] as List? ?? [])
+          .whereType<Map>()
+          .where((v) => v['channelId'] == id)
+          .map((v) => v['id'])
+          .whereType<String>(),
+    );
+    await _readerSettingsChanged();
+    notifyListeners();
+  }
+
+  Future<void> setNewsNotifications(bool enabled) async {
+    await _reader?.setNotifications(enabled);
+    if (enabled && Platform.isAndroid) {
+      await PilotPlatform.requestNotifications();
+    }
+    await _readerSettingsChanged();
+    notifyListeners();
+  }
+
+  Future<void> setImageMode(String mode) async {
+    await _reader?.setImages(mode);
+    _local?.imageMode = mode;
+    await _readerSettingsChanged();
+    notifyListeners();
+  }
+
+  Future<void> setChannelMuted(String id, bool value) async {
+    await _reader?.setMuted(id, value);
+    await _readerSettingsChanged();
+    notifyListeners();
+  }
+
+  Future<void> _readerSettingsChanged() async {
+    if (Platform.isAndroid && activeMode && await _service.isRunning()) {
+      await _send('readerSettings', {'language': languageCode});
+    }
+  }
+
+  Future<void> publishNewsWithImage(
+    String id,
+    String text,
+    Uint8List image,
+  ) async {
+    await _reconcileService();
+    if (activeMode && Platform.isAndroid) {
+      await _send('publishToChannel', {
+        'channelId': id,
+        'text': text,
+        'image': base64Encode(image),
+      });
+    } else {
+      _local ??= _makeEngine();
+      await _local!.publishToChannel(
+        channelId: id,
+        text: text,
+        imageBytes: image,
+      );
+      snapshot = await _local!.snapshot();
+    }
+    notifyListeners();
+  }
+
+  Future<String?> channelAction(
+    String action,
+    Map<String, dynamic> args,
+  ) async {
+    await _reconcileService();
+    dynamic result;
+    if (activeMode && Platform.isAndroid) {
+      result = await _send(action, args);
+    } else {
+      _local ??= _makeEngine();
+      switch (action) {
+        case 'exportChannelRecovery':
+          result = await _local!.exportChannelRecovery(
+            args['channelId'] as String,
+            args['password'] as String,
+          );
+        case 'restoreChannelRecovery':
+          result = await _local!.restoreChannelRecovery(
+            args['file'] as String,
+            args['password'] as String,
+          );
+        case 'createEditorRequest':
+          result = await _local!.createEditorRequest(args['label'] as String);
+        case 'inspectEditorRequest':
+          result = jsonEncode(
+            _local!.inspectEditorRequest(args['file'] as String),
+          );
+        case 'approveEditor':
+          result = await _local!.approveEditor(
+            args['channelId'] as String,
+            args['file'] as String,
+          );
+        case 'acceptEditorInvitation':
+          result = await _local!.acceptEditorInvitation(args['file'] as String);
+        case 'removeChannel':
+          await _local!.removeChannel(args['channelId'] as String);
+        case 'setWriterNickname':
+          await _local!.setWriterNickname(
+            args['channelId'] as String,
+            args['nickname'] as String,
+          );
+        case 'revokeEditor':
+          await _local!.revokeEditor(
+            args['channelId'] as String,
+            args['grantId'] as String,
+          );
+        case 'removePublishedNews':
+          await _local!.removePublishedNews(
+            args['channelId'] as String,
+            args['newsId'] as String,
+          );
+        default:
+          throw ArgumentError('Unknown channel action.');
+      }
+      snapshot = await _local!.snapshot();
+    }
+    notifyListeners();
+    return result as String?;
   }
 
   Future<void> addPeer(PeerCard peer) async {
@@ -985,7 +1313,7 @@ class AppController extends ChangeNotifier {
     await PilotPlatform.exportReport(report);
   }
 
-  Future<void> _send(
+  Future<dynamic> _send(
     String action, [
     Map<String, dynamic> data = const {},
   ]) async {
@@ -1000,7 +1328,7 @@ class AppController extends ChangeNotifier {
     }
     _ensureAlive();
     final requestId = nextRequestId();
-    final done = Completer<void>();
+    final done = Completer<dynamic>();
     _commands[requestId] = done;
     _service.invoke('command', {
       'action': action,
@@ -1008,7 +1336,9 @@ class AppController extends ChangeNotifier {
       ...data,
     });
     try {
-      await done.future.timeout(const Duration(seconds: 25));
+      return await done.future.timeout(
+        Duration(seconds: action.contains('Recovery') ? 120 : 25),
+      );
     } finally {
       _commands.remove(requestId);
     }

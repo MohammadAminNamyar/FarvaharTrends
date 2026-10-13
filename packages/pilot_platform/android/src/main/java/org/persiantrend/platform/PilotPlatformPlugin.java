@@ -2,6 +2,8 @@ package org.persiantrend.platform;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.PendingIntent;
 import android.app.Application;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
@@ -51,6 +53,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
   private MethodChannel.Result exportResult, permissionResult;
   private MethodChannel.Result bluetoothEnableResult;
   private String report;
+  private ChannelDocuments documents;
   private WifiManager.MulticastLock discoveryLock;
   private static final int EXPORT = 4811, NOTIFICATIONS = 4812, NEARBY = 4813, BLUETOOTH_ENABLE = 4814;
   private WiFiDirectTransport wifiDirect;
@@ -59,6 +62,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
   private GatewayPortLease gatewayLease;
   private static final Set<PilotPlatformPlugin> INSTANCES = new HashSet<>();
   private static final Set<Activity> RESUMED = new HashSet<>();
+  private static long lastNewsAlertElapsed = -60000;
   private static boolean lifecycleRegistered;
   private Object identityLeaseOwner;
   private static final Handler IDENTITY_HANDLER = new Handler(Looper.getMainLooper());
@@ -71,6 +75,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
   @Override public void onAttachedToEngine(FlutterPluginBinding binding) {
     identityLeaseOwner = new Object();
     context = binding.getApplicationContext();
+    documents = new ChannelDocuments(context);
     channel = new MethodChannel(binding.getBinaryMessenger(), "persiantrend/device");
     channel.setMethodCallHandler(this);
     INSTANCES.add(this);
@@ -92,6 +97,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     ((NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE)).createNotificationChannel(receiving);
   }
   @Override public void onDetachedFromEngine(FlutterPluginBinding binding) {
+    if (documents != null) { documents.close(); documents = null; }
     if (gatewayLease != null) { gatewayLease.close(); gatewayLease = null; }
     Object detachedOwner = identityLeaseOwner;
     identityLeaseOwner = null;
@@ -115,6 +121,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
       activityBinding.removeActivityResultListener(this);
       activityBinding.removeRequestPermissionsResultListener(this);
     }
+    if (documents != null) documents.cancel();
     activityBinding = null;
     activity = null;
     if (permissionResult != null) { permissionResult.success(null); permissionResult = null; }
@@ -162,6 +169,16 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
             result.error("identity_lease_invalid", "Identity lease is no longer owned", null); return;
           }
           result.success(null); return;
+        case "saveChannelDocument":
+        case "openChannelDocument":
+        case "pickNewsImage":
+          documents.start(activity,call.method,call.argument("name"),call.argument("contents"),result); return;
+        case "postNewsNotification": {
+          Number count=call.argument("count");
+          if(count==null || count.intValue()<0 || count.intValue()>256) throw new IllegalArgumentException("Invalid unread count");
+          postNewsNotification(count.intValue(),"fa".equals(call.argument("language")),Boolean.TRUE.equals(call.argument("alert")));
+          result.success(null); return;
+        }
         case "state": result.success(state()); return;
         case "startLocalWifi":
           Number localTcp = call.argument("tcpPort"), localIngress = call.argument("ingressPort"),
@@ -274,6 +291,29 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     }
   }
 
+  private void postNewsNotification(int count,boolean fa,boolean alert) {
+    NotificationManager manager=(NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
+    if(count==0) { manager.cancel(772); return; }
+    if(!RESUMED.isEmpty() || !manager.areNotificationsEnabled() || (Build.VERSION.SDK_INT>=33 && !granted(Manifest.permission.POST_NOTIFICATIONS))) return;
+    long now=SystemClock.elapsedRealtime();
+    if(alert && now-lastNewsAlertElapsed<60000) alert=false;
+    // Silent state refreshes must not create a notification that the user dismissed.
+    if(!alert) { boolean exists=false; for(android.service.notification.StatusBarNotification n:manager.getActiveNotifications()) if(n.getId()==772) exists=true; if(!exists) return; }
+    NotificationChannel news=new NotificationChannel("persiantrend_news",fa ? "خبرهای تازه" : "News updates",NotificationManager.IMPORTANCE_DEFAULT);
+    news.setDescription(fa ? "اعلان اختیاری خبرهای کانال‌های دنبال‌شده" : "Optional updates from followed channels"); news.setShowBadge(true); news.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE); manager.createNotificationChannel(news);
+    Intent launch=context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+    if(launch==null) return;
+    launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+    PendingIntent tap=PendingIntent.getActivity(context,772,launch,PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    int icon=context.getResources().getIdentifier("ic_bg_service_small","drawable",context.getPackageName());
+    if(icon==0) icon=context.getApplicationInfo().icon;
+    String title=fa ? "پرشین‌ترند" : "PersianTrend";
+    String body=fa ? "خبرهای تازه در کانال‌های شما" : "New updates in your channels";
+    Notification publicVersion=new Notification.Builder(context,"persiantrend_news").setSmallIcon(icon).setContentTitle(title).setContentText(fa ? "خبر تازه دریافت شد" : "New update received").build();
+    manager.notify(772,new Notification.Builder(context,"persiantrend_news").setSmallIcon(icon).setContentTitle(title).setContentText(body).setNumber(count).setContentIntent(tap).setAutoCancel(true).setOnlyAlertOnce(!alert).setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(publicVersion).setCategory(Notification.CATEGORY_SOCIAL).build());
+    if(alert) lastNewsAlertElapsed=now;
+  }
+
   private static void updateVisibility() {
     for (PilotPlatformPlugin instance : new ArrayList<>(INSTANCES)) {
       if (instance.bluetooth != null) instance.bluetooth.setAppVisible(!RESUMED.isEmpty());
@@ -343,6 +383,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     data.put("elapsedRealtimeMs", SystemClock.elapsedRealtime());
     int boot = Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
     data.put("bootId", boot >= 0 ? Integer.toString(boot) : null);
+    data.put("appVisible", !RESUMED.isEmpty());
     data.put("isLocked", keyguard.isDeviceLocked());
     data.put("lockStateKnown", true);
     data.put("screenOn", power.isInteractive());
@@ -356,6 +397,9 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     if (bluetooth != null) data.put("bluetooth", bluetooth.snapshot());
     if (localWifi != null) data.put("localWifi", localWifi.snapshot());
     data.put("network", caps == null ? "none" : caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? "cellular" : caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "wifi" : "other");
+    data.put("activeNetworkHandle", active == null ? "none" : Long.toString(active.getNetworkHandle()));
+    android.net.LinkProperties links=active==null ? null : connectivity.getLinkProperties(active);
+    data.put("activeNetworkEpoch", active==null ? "none" : Long.toString(active.getNetworkHandle())+":"+(links==null ? 0 : links.getLinkAddresses().toString().hashCode()));
     data.put("internetValidated", caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
     Intent battery = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
     if (battery != null) {
@@ -387,6 +431,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     return true;
   }
   @Override public boolean onActivityResult(int request, int resultCode, Intent data) {
+    if (documents != null && documents.onResult(request,resultCode,data)) return true;
     if (request == BLUETOOTH_ENABLE) {
       if (bluetoothEnableResult != null) { bluetoothEnableResult.success(null); bluetoothEnableResult = null; }
       return true;

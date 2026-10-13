@@ -34,6 +34,19 @@ class DeviceProbe {
     final summary = <String, dynamic>{
       'session': session,
       'running': snapshot['running'],
+      'overlay': snapshot['overlay'],
+      'lastError': snapshot['lastError'],
+      'discoveryLastError': snapshot['discoveryLastError'],
+      'currentMessages': messages
+          .map(
+            (v) => {
+              'id': v['id'],
+              'text': v['text'],
+              'imageReady':
+                  v['image'] is Map && (v['image'] as Map)['path'] is String,
+            },
+          )
+          .toList(),
       'deliveryMode': snapshot['deliveryMode'],
       'connectedCount': snapshot['connectedCount'],
       'activeTransportCounts': snapshot['activeTransportCounts'],
@@ -45,8 +58,9 @@ class DeviceProbe {
         .then((_) async {
           final device = await deviceState();
           if (device['packageName'] is! String ||
-              !(device['packageName'] as String).endsWith('.e2e'))
+              !(device['packageName'] as String).endsWith('.e2e')) {
             return;
+          }
           _directory ??= await getExternalStorageDirectory();
           if (_directory == null) return;
           Map<String, dynamic>? state = device;

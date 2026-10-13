@@ -130,6 +130,31 @@ void main() {
     );
   });
 
+  test('Expired hints are usable only for private pinned reconnection', () {
+    const now = 1800000000000;
+    final original = contact(now: now);
+    expect(
+      () => PeerContact.parse(original.toJson(), nowMs: now + 60001),
+      throwsFormatException,
+    );
+    final cached = PeerContact.readCached(
+      original.toJson(),
+      nowMs: now + 60001,
+    );
+    expect(cached.id, connection.id);
+    expect(
+      () => PeerContact.readCached(
+        original.toJson(),
+        nowMs: original.expiresAtMs + PeerContact.maxReconnectAgeMs + 1,
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => PeerContact.readCached(original.toJson(), nowMs: now - 31000),
+      throwsFormatException,
+    );
+  });
+
   test(
     'Cache survives restart and tolerates expired, damaged or oversized data',
     () async {

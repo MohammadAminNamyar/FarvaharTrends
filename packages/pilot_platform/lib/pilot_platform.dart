@@ -74,6 +74,25 @@ class PilotPlatform {
     return _transportEvents.stream;
   }
 
+  static Future<bool> saveChannelDocument(String contents, String name) async =>
+      await _channel.invokeMethod<bool>('saveChannelDocument', {
+        'contents': contents,
+        'name': name,
+      }) ??
+      false;
+  static Future<String?> openChannelDocument() =>
+      _channel.invokeMethod<String>('openChannelDocument');
+  static Future<Uint8List?> pickNewsImage() =>
+      _channel.invokeMethod<Uint8List>('pickNewsImage');
+  static Future<void> postNewsNotification(
+    int count,
+    String language, {
+    bool alert = false,
+  }) => _channel.invokeMethod('postNewsNotification', {
+    'count': count,
+    'language': language,
+    'alert': alert,
+  });
   static Future<void> requestNearbyPermissions() =>
       _channel.invokeMethod('requestNearbyPermissions');
   static Future<void> enableBluetooth() =>

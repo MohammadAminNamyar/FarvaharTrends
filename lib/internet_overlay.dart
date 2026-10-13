@@ -7,13 +7,17 @@ import 'package:flutter_pear/flutter_pear.dart';
 
 import 'core/overlay_frames.dart';
 import 'core/peer_engine.dart';
+import 'core/network_epoch.dart';
 
 /// Hyperswarm discovers connection identities, then carries the existing TLS
 /// protocol. A discovered peer gains no publisher trust or subscriptions.
 class InternetOverlay {
-  InternetOverlay(this.engine, {required this.onState});
+  InternetOverlay(this.engine, {required this.onState, this.networkKey});
   final PeerEngine engine;
   final void Function(Map<String, dynamic>) onState;
+  final Future<String?> Function()? networkKey;
+  final NetworkEpoch _networkEpoch = NetworkEpoch();
+  Future<void>? _stopping;
   static const namespace = String.fromEnvironment(
     'PERSIANTREND_DISCOVERY_NAMESPACE',
     defaultValue: 'persiantrend/public-news/overlay/v1',
@@ -25,36 +29,49 @@ class InternetOverlay {
   StreamSubscription<PearConnection>? _connections;
   StreamSubscription<PearSwarmStatus>? _states;
   Timer? _timer;
+  bool _wanted = false;
+  Timer? _restartTimer;
+  int _restartAttempts = 0, _refreshFailures = 0;
   bool _running = false;
   bool _refreshing = false;
   int _generation = 0;
   int _routeCounter = 0;
 
   Future<void> start() async {
-    if (_running || engine.nearbyOnly) return;
+    if (engine.nearbyOnly) return;
+    _wanted = true;
+    _restartTimer?.cancel();
+    _restartTimer = null;
+    await _stopping;
+    if (!_wanted || engine.nearbyOnly || _running) return;
     _running = true;
     final generation = ++_generation;
     try {
+      final key = await networkKey?.call();
+      if (!_current(generation)) return;
+      _networkEpoch.observe(key);
       final pear = await Pear.start();
-      _pear = pear;
       if (!_current(generation)) {
         await pear.dispose();
         return;
       }
+      _pear = pear;
       // The Android receiving foreground service owns this lifecycle.
       pear.lifecycle.policy = PearLifecyclePolicy.manual;
       final topic = PearCrypto.hash(Uint8List.fromList(utf8.encode(namespace)));
       _topic = topic;
       final swarm = await pear.join(topic, acceptUnannounced: true);
-      _swarm = swarm;
       if (!_current(generation)) {
         await pear.dispose();
         return;
       }
+      _swarm = swarm;
       _connections = swarm.connections.listen((connection) {
         if (!_current(generation) ||
             _routes.length >= PeerEngine.maxConnections) {
-          unawaited(pear.disconnect(connection.remotePublicKey));
+          unawaited(
+            pear.disconnect(connection.remotePublicKey, cooldown: true),
+          );
           return;
         }
         final id = connection.remotePublicKey.hex;
@@ -64,29 +81,56 @@ class InternetOverlay {
         _routes[id] = route;
         unawaited(route.start());
       });
-      _states = swarm.state.listen(
-        (value) => onState({
-          'state': value.state.name,
-          if (value.error != null) 'error': value.error!.code,
-        }),
-      );
+      _states = swarm.state.listen((value) {
+        if (_current(generation)) {
+          onState({
+            'state': value.state.name,
+            if (value.error != null) 'error': value.error!.code,
+          });
+        }
+      });
       _timer = Timer.periodic(
         const Duration(seconds: 5),
         (_) => unawaited(refresh()),
       );
+      _restartAttempts = 0;
+      _refreshFailures = 0;
       onState({'state': 'discovering'});
     } catch (_) {
-      onState({'state': 'unavailable'});
-      await stop();
+      if (!_current(generation)) return;
+      onState({'state': 'retrying', 'error': 'worklet_start_failed'});
+      await _stopResources();
+      _scheduleRestart();
     }
+  }
+
+  void _scheduleRestart({Duration? after}) {
+    if (!_wanted || engine.nearbyOnly || _restartTimer != null) return;
+    final delay = [10, 20, 40, 80, 120][_restartAttempts.clamp(0, 4)];
+    _restartAttempts++;
+    _restartTimer = Timer(after ?? Duration(seconds: delay), () {
+      _restartTimer = null;
+      if (_wanted) unawaited(start());
+    });
   }
 
   bool _current(int generation) => _running && _generation == generation;
 
   Future<void> refresh() async {
     if (!_running || _refreshing) return;
+    final generation = _generation;
     _refreshing = true;
     try {
+      final key = await networkKey?.call();
+      if (!_current(generation)) return;
+      if (_networkEpoch.observe(key)) {
+        onState({'state': 'retrying', 'error': 'network_changed'});
+        // The old UDP sockets can remain bound to a vanished interface. Reopen
+        // the worklet after a short debounce; keys/cache/news remain intact.
+        await _stopResources();
+        _scheduleRestart(after: const Duration(seconds: 2));
+        return;
+      }
       for (final route in _routes.values.toList()) {
         final linked =
             route.peerId != null &&
@@ -101,29 +145,53 @@ class InternetOverlay {
             _topic!,
             node: route.helperNode,
           );
+          if (!_current(generation)) return;
           route.remembered = true;
           route.deadline?.cancel();
         }
       }
       final network = await _pear?.networkState();
+      if (!_current(generation)) return;
+      _refreshFailures = 0;
       if (_running && network != null) {
         onState({
           'state': _routes.values.any((route) => route.remembered)
               ? 'connected'
               : 'discovering',
+          'discoveryStage': network['discoveryStage'],
+          'discoveryRefreshes': network['discoveryRefreshes'],
           'cachedRoutingCount': network['cachedRoutingCount'],
           'cachedPeerCount': network['cachedPeerCount'],
           'reachableHelper': network['reachableHelper'],
         });
       }
     } catch (_) {
-      if (_running) onState({'state': 'retrying'});
+      if (_current(generation)) {
+        onState({'state': 'retrying', 'error': 'worklet_unresponsive'});
+        if (++_refreshFailures >= 3) {
+          await _stopResources();
+          _scheduleRestart();
+        }
+      }
     } finally {
       _refreshing = false;
     }
   }
 
   Future<void> stop() async {
+    _wanted = false;
+    _restartTimer?.cancel();
+    _restartTimer = null;
+    await _stopResources();
+  }
+
+  Future<void> _stopResources() {
+    return _stopping ??= _disposeResources().whenComplete(
+      () => _stopping = null,
+    );
+  }
+
+  Future<void> _disposeResources() async {
     _running = false;
     ++_generation;
     _timer?.cancel();
@@ -187,7 +255,7 @@ class _OverlayRoute {
         if (!current) return;
         queuedBytes += bytes.length;
         if (queuedBytes > 256 * 1024) {
-          unawaited(close());
+          unawaited(close(cooldown: true));
           return;
         }
         processing = processing
@@ -198,7 +266,7 @@ class _OverlayRoute {
               }
             })
             .catchError((Object _) {
-              unawaited(close());
+              unawaited(close(cooldown: true));
             })
             .whenComplete(() {
               queuedBytes -= bytes.length;
@@ -208,7 +276,7 @@ class _OverlayRoute {
       onDone: () => unawaited(close()),
     );
     deadline = Timer(const Duration(seconds: 30), () {
-      if (!remembered) unawaited(close());
+      if (!remembered) unawaited(close(cooldown: true));
     });
     try {
       final network = await owner._pear!.networkState();
@@ -375,7 +443,7 @@ class _OverlayRoute {
     socketSubscription = outgoing;
   }
 
-  Future<void> close({bool disconnect = true}) async {
+  Future<void> close({bool disconnect = true, bool cooldown = false}) async {
     if (closed) return;
     closed = true;
     if (!helloWritten.isCompleted) helloWritten.complete();
@@ -390,7 +458,10 @@ class _OverlayRoute {
     }
     if (disconnect && owner._pear != null) {
       try {
-        await owner._pear!.disconnect(connection.remotePublicKey);
+        await owner._pear!.disconnect(
+          connection.remotePublicKey,
+          cooldown: cooldown,
+        );
       } catch (_) {}
     }
   }

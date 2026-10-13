@@ -46,9 +46,9 @@ The prototype supports one BLE link per device, with bounded sessions rotating a
 
 ## Mobile data needs a reachable peer
 
-First select **All networks** on the testing phones. **The general APK currently has no provisioned reachable Internet/domestic volunteer servers.** The local-test PC address is private to its Wi-Fi. Phones on unrelated mobile providers cannot reach that address: currently **route unavailable**, not a completed mobile test. Ordinary testers need not enter addresses. The organizer must first supply and prove a reachable consenting peer.
+Select **All networks** on the testing phones. Use different Wi-Fi/mobile networks, with Bluetooth off. The same APK automatically discovers peers through Hyperswarm and attempts an encrypted connection; no manually entered IP or helper application is required. Follow the desired channel, then send a fresh marker in each direction. Record discovery time separately from delivery after connection. For a shutdown trial, first allow contacts to be learned, then remove international access while keeping domestic routes available. Compatible Wi-Fi phones can automatically offer a short-lived TCP endpoint and share its signed contact; this depends on router/provider support.
 
-There is no NAT traversal in this build. Carrier NAT/firewall failure shows the tested direct path failed, not that all peer-to-peer communication is impossible. Local radios require nearby participants. A few successful phones cannot establish nationwide/shutdown reliability; an Iranian IP alone does not prove the physical path stayed inside Iran.
+NAT traversal is attempted, but restrictive NAT, blocked UDP and provider firewalls can prevent it. Cached domestic contacts and nearby forwarding are alternatives when their routes are available. Local radios require nearby participants. A few successful phones cannot establish nationwide/shutdown reliability; an Iranian IP alone does not prove the physical path stayed inside Iran.
 
 Compilation, host protocol tests and a working physical Windows BLE scanner are development checks, not real-phone delivery, locked-phone or Iranian field results. Report actual observations separately. Use harmless public content; signatures establish keys and integrity, not human identity, factual accuracy or anonymity.
 
@@ -56,8 +56,8 @@ Compilation, host protocol tests and a working physical Windows BLE scanner are 
 
 Keep explicit diagnostic trials separate from ordinary news and verbal feedback. A recipient-signed ACK processed on the source's monotonic clock within 300 seconds after publication starts conservatively bounds durable delivery. Late/missing ACKs leave arrival time unproven. Fix the manually enrolled recipient roster before publication; do not subtract clocks from different phones. See [protocol limitations](PROTOCOL-LIMITATIONS.md). These diagnostics are not required of a friend trying the app.
 
-## Version 0.5.0: connection choices
+## Version 0.6.0: connection choices
 
-The default is **Nearby only**: Bluetooth and devices on the same local Wi-Fi. Mobile data can remain enabled for other apps; PersianTrend does not use it in this mode. Internet/domestic-network peer routes and Wi-Fi Direct are disabled. Choose **All networks** explicitly for direct network routes and Wi-Fi Direct. Direct peers see connection addresses.
+New installations default to **All networks**; saved choices are preserved. **Nearby only** limits this app to Bluetooth and actual on-link Wi-Fi, while mobile data may remain enabled for other apps. Public discovery, remote reconnect contacts, router port leases and Wi-Fi Direct are disabled in that mode. Direct peers see connection addresses. Android 10 or newer is required.
 
 Channel signing and connections now use separate persisted keys. Updating keeps existing channels and private preferences. Historical key linkage cannot be undone. Ordinary channel news has no automatic read/delivery receipts, and follow/trust choices stay local. Reading or forwarding does not establish original authorship. News from outside Iran does not itself protect readers' identities. The Connection screen has a short explanation and expandable Privacy details. No Tor is bundled.

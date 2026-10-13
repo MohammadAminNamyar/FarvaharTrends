@@ -189,7 +189,7 @@ void main() {
       expect(find.text('Waiting for a starting peer'), findsOneWidget);
       expect(
         find.text(
-          'Local discovery continues. No starting peers are configured for connections across networks.',
+          'Discovery continues over available paths. Connecting to other devices depends on network conditions.',
         ),
         findsOneWidget,
       );
@@ -355,8 +355,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final text = language == 'fa'
-          ? 'سرور مرکزی اجباری برای جمع‌آوری خبر یا انتخاب‌های شما نداریم. خبرهای عمومی میان همتاها جابه‌جا می‌شوند؛ انتخاب دنبال‌کردن و اعتماد روی این گوشی می‌ماند. کلید انتشار از کلید اتصال جداست. موقعیت GPS را نمی‌خوانیم.'
-          : 'There is no required central server collecting your news or choices. Public news moves between peers; follow and trust choices stay on this phone. Publishing and connections use separate keys. We do not read your GPS location.';
+          ? 'سرور مرکزی اجباری برای جمع‌آوری خبر یا انتخاب‌های شما نداریم. خبرهای عمومی میان همتاها جابه‌جا می‌شوند؛ انتخاب دنبال‌کردن و اعتماد روی این گوشی می‌ماند. در حالت همهٔ شبکه‌ها، شبکهٔ کشف عمومی به یافتن همتاها کمک می‌کند و همتاهای آن می‌توانند اطلاعات اتصال را ببینند. کلید انتشار از کلید اتصال جداست. موقعیت GPS را نمی‌خوانیم.'
+          : 'There is no required central server collecting your news or choices. Public news moves between peers; follow and trust choices stay on this phone. In All networks mode, a public discovery network helps find peers and its peers can observe connection metadata. Publishing and connections use separate keys. We do not read your GPS location.';
       await reveal(tester, find.text(text));
       expect(find.text(text), findsOneWidget);
       final limits = language == 'fa'

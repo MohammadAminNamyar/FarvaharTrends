@@ -27,6 +27,62 @@ void main() {
   });
 
   test(
+    'diagnostic history has byte bounds and compaction removes backup',
+    () async {
+      final store = PilotStore(scratch, localOwnerId: local.id);
+      await store.load();
+      for (var i = 0; i < 90; i++) {
+        await store.event({
+          'kind': 'bounded',
+          'index': i,
+          for (var n = 0; n < 64; n++) 'field-$n': 'ع' * 1024,
+        });
+      }
+      final reopened = PilotStore(scratch, localOwnerId: local.id);
+      await reopened.load();
+      final bytes = reopened.events.fold<int>(
+        0,
+        (sum, row) => sum + utf8.encode(jsonEncode(row)).length,
+      );
+      expect(bytes, lessThanOrEqualTo(512 * 1024));
+      expect(reopened.events, isNotEmpty);
+      expect(reopened.events.last['index'], 89);
+      expect(await File('${scratch.path}/pilot.jsonl.bak').exists(), isFalse);
+      expect(
+        await File('${scratch.path}/pilot.jsonl').length(),
+        lessThan(600 * 1024),
+      );
+    },
+  );
+
+  test('overlay arrival path survives persistence and reopening', () async {
+    final store = PilotStore(scratch, localOwnerId: local.id);
+    await store.load();
+    final channel = SignedChannel.create(remote, name: 'Network news');
+    await store.putChannel(channel.toJson());
+    final news = SignedBulletin.create(
+      remote,
+      runId: 'news',
+      text: 'Fresh network news',
+      sequence: 1,
+      channelId: channel.id,
+    );
+    final observation = {
+      'receivedVia': 'overlay',
+      'receivedNetwork': 'cellular',
+      'receivedAtWallMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    expect(
+      await store.putBulletin(news.toJson(), observation: observation),
+      isTrue,
+    );
+    expect(store.bulletinObservations[news.id], observation);
+    final reopened = PilotStore(scratch, localOwnerId: local.id);
+    await reopened.load();
+    expect(reopened.bulletinObservations[news.id], observation);
+  });
+
+  test(
     'torn UTF-8 tail cannot prevent recovery of committed records',
     () async {
       final store = PilotStore(scratch, localOwnerId: local.id);

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'channels.dart';
+import 'channel_control.dart';
 import 'models.dart';
 
 class ChannelCapacityException extends StateError {
@@ -23,6 +24,7 @@ class PilotStore {
   /// The local signing key, never private follow/trust preferences. Unknown
   /// ownership retains the conservative legacy policy of rejecting at capacity.
   final String? localOwnerId;
+  final Set<String> managedChannelIds = {};
   static const maxBulletins = 256;
   static const maxReceipts = 2048;
   static const maxEvents = 800;
@@ -38,6 +40,7 @@ class PilotStore {
   final Map<String, Map<String, dynamic>> receipts = {};
   final Map<String, Map<String, dynamic>> publications = {};
   final Map<String, Map<String, dynamic>> channels = {};
+  final Map<String, Map<String, dynamic>> channelPolicies = {};
   final Map<String, String> _channelPublishers = {};
   final Map<String, int> channelSequences = {};
   final Map<String, String> _bulletinPublishers = {};
@@ -53,6 +56,7 @@ class PilotStore {
   };
   int sequence = 0;
   int _records = 0;
+  int _compactedBytes = 0;
   bool _loaded = false;
   bool _writeFailed = false;
   bool _recovering = false;
@@ -157,6 +161,51 @@ class PilotStore {
     return bulletins.containsKey(id);
   });
 
+  ChannelControl? policyFor(String channelId) {
+    final raw = channelPolicies[channelId], channel = channels[channelId];
+    return raw == null || channel == null
+        ? null
+        : ChannelControl.parse(raw, SignedChannel.fromJson(channel));
+  }
+
+  Future<bool> putChannelPolicy(ChannelControl policy) => _serial(() async {
+    _requireLoaded();
+    final channel = channels[policy.channelId];
+    if (channel == null || policy.kind != 'policy') {
+      throw const FormatException('Channel policy has no channel.');
+    }
+    final verified = ChannelControl.parse(
+      policy.toJson(),
+      SignedChannel.fromJson(channel),
+    );
+    final previous = policyFor(policy.channelId);
+    if (previous?.deleted == true && !verified.deleted) return false;
+    if (previous != null &&
+        (previous.revision > verified.revision ||
+            (previous.revision == verified.revision &&
+                previous.id.compareTo(verified.id) <= 0))) {
+      return false;
+    }
+    await _append({'kind': 'channelPolicy', 'value': verified.toJson()});
+    return true;
+  });
+
+  Future<void> advanceChannelSequence(String id, int sequence) =>
+      _serial(() async {
+        if (sequence < 0 ||
+            sequence > 9007199254740991 ||
+            !channels.containsKey(id)) {
+          throw const FormatException('Invalid channel sequence.');
+        }
+        if (sequence > (channelSequences[id] ?? 0)) {
+          await _append({
+            'kind': 'channelSequence',
+            'channelId': id,
+            'value': sequence,
+          });
+        }
+      });
+
   Future<void> putPublication(
     Map<String, dynamic> bulletin,
     Map<String, dynamic> metadata,
@@ -187,7 +236,7 @@ class PilotStore {
 
   Future<void> event(Map<String, dynamic> value) => _serial(() async {
     _requireLoaded();
-    await _append({'kind': 'event', 'value': value});
+    await _append({'kind': 'event', 'value': _flatObject(value)});
   });
 
   Future<void> flush() => _serial(() async {});
@@ -215,7 +264,8 @@ class PilotStore {
     }
     _apply(record);
     _records++;
-    if (_records >= 2048 || await _journal.length() > 4 * 1024 * 1024) {
+    if (_records >= 2048 ||
+        await _journal.length() > _compactedBytes + 4 * 1024 * 1024) {
       await _compact();
     }
   }
@@ -305,6 +355,42 @@ class PilotStore {
       case 'channel':
         final channel = SignedChannel.fromJson(_map(record['value']));
         _admitChannel(channel);
+      case 'channelPolicy':
+        final raw = _map(record['value']);
+        final encoded = utf8.decode(
+          base64Decode(raw['payloadBase64'] as String),
+        );
+        final channelId = (jsonDecode(encoded) as Map)['channelId'] as String;
+        final metadata = channels[channelId];
+        if (metadata == null) break;
+        final policy = ChannelControl.parse(
+          raw,
+          SignedChannel.fromJson(metadata),
+        );
+        if (policy.kind != 'policy') {
+          throw const FormatException('Expected channel policy.');
+        }
+        final previous = policyFor(channelId);
+        if (previous?.deleted == true && !policy.deleted) break;
+        if (previous == null ||
+            policy.revision > previous.revision ||
+            (policy.revision == previous.revision &&
+                policy.id.compareTo(previous.id) < 0)) {
+          channelPolicies[channelId] = policy.toJson();
+          for (final id in bulletins.keys.toList()) {
+            if (!bulletins[id]!.containsKey('payloadBase64')) continue;
+            final news = SignedBulletin.fromJson(bulletins[id]!);
+            if (news.channelId == channelId &&
+                !news.verifyForChannel(
+                  SignedChannel.fromJson(metadata),
+                  policy: policy,
+                )) {
+              bulletins.remove(id);
+              publications.remove(id);
+              bulletinObservations.remove(id);
+            }
+          }
+        }
       case 'bulletin':
         final value = _map(record['value']);
         _validateStoredBulletin(value);
@@ -367,6 +453,7 @@ class PilotStore {
     for (final field in [
       'peers',
       'channels',
+      'channelPolicies',
       'channelSequences',
       'bulletins',
       'bulletinObservations',
@@ -382,7 +469,8 @@ class PilotStore {
       throw const FormatException('Invalid snapshot fields.');
     }
     final staged = PilotStore(directory, localOwnerId: localOwnerId)
-      .._recovering = _recovering;
+      .._recovering = _recovering
+      ..managedChannelIds.addAll(managedChannelIds);
     staged.sequence = record['sequence'] as int;
     final savedEvictions = record['evictions'];
     if (savedEvictions is Map) {
@@ -396,6 +484,24 @@ class PilotStore {
       staged.peers.addAll(staged._validatedPeers(savedPeers.values));
     }
     staged._restoreChannels(record['channels']);
+    final savedPolicies = record['channelPolicies'];
+    if (savedPolicies is Map) {
+      for (final row in savedPolicies.entries) {
+        try {
+          final metadata = staged.channels[row.key];
+          if (metadata == null || row.value is! Map) continue;
+          final policy = ChannelControl.parse(
+            Map<String, dynamic>.from(row.value as Map),
+            SignedChannel.fromJson(metadata),
+          );
+          if (policy.kind == 'policy' && policy.channelId == row.key) {
+            staged.channelPolicies[row.key as String] = policy.toJson();
+          }
+        } on FormatException {
+          /* Invalid public policy never grants a role. */
+        }
+      }
+    }
     final savedSequences = record['channelSequences'];
     if (savedSequences is Map) {
       for (final entry in savedSequences.entries) {
@@ -460,6 +566,7 @@ class PilotStore {
     for (final pair in [
       (peers, staged.peers),
       (channels, staged.channels),
+      (channelPolicies, staged.channelPolicies),
       (bulletins, staged.bulletins),
       (bulletinObservations, staged.bulletinObservations),
       (receipts, staged.receipts),
@@ -518,8 +625,10 @@ class PilotStore {
     return result;
   }
 
-  Map<String, dynamic> _flatObject(Map raw) => {
-    for (final entry in raw.entries.take(64))
+  Map<String, dynamic> _flatObject(Map raw) {
+    final result = <String, dynamic>{};
+    var bytes = 2;
+    for (final entry in raw.entries.take(64)) {
       if (entry.key is String &&
           (entry.key as String).length <= 80 &&
           (entry.value is bool ||
@@ -527,15 +636,22 @@ class PilotStore {
                   (entry.value as String).length <= 1024) ||
               (entry.value is num &&
                   (entry.value as num).isFinite &&
-                  (entry.value as num).abs() <= 9007199254740991)))
-        entry.key as String: entry.value,
-  };
+                  (entry.value as num).abs() <= 9007199254740991))) {
+        final size = utf8.encode(jsonEncode({entry.key: entry.value})).length;
+        if (bytes + size > 8 * 1024) continue;
+        result[entry.key as String] = entry.value;
+        bytes += size;
+      }
+    }
+    return result;
+  }
 
   Map<String, dynamic> _bulletinObservation(dynamic raw) {
     if (raw is! Map) return {};
     return {
       if ({
         'ip',
+        'overlay',
         'lan',
         'wifiDirect',
         'bluetooth',
@@ -684,7 +800,10 @@ class PilotStore {
       if (_recovering && bulletin.channelId != null) {
         final metadata = channels[bulletin.channelId];
         if (metadata == null ||
-            !bulletin.verifyForChannel(SignedChannel.fromJson(metadata))) {
+            !bulletin.verifyForChannel(
+              SignedChannel.fromJson(metadata),
+              policy: policyFor(bulletin.channelId!),
+            )) {
           throw const FormatException('Invalid cached channel news signature.');
         }
       }
@@ -718,15 +837,32 @@ class PilotStore {
       if (channel != null) (byChannel[channel] ??= []).add(id);
     }
     for (final ids in byChannel.values) {
-      // Signed per-channel sequence order survives out-of-order arrival and
-      // replay. Content IDs break sequence ties consistently on every relay.
-      ids.sort((a, b) {
-        final sequence = _bulletinSequences[b]!.compareTo(
-          _bulletinSequences[a]!,
-        );
-        return sequence != 0 ? sequence : a.compareTo(b);
-      });
-      for (final id in ids.skip(maxBulletinsPerChannel)) {
+      final authors = <String, List<String>>{};
+      for (final id in ids) {
+        (authors[_bulletinPublishers[id]!] ??= []).add(id);
+      }
+      for (final group in authors.values) {
+        group.sort((a, b) {
+          final order = _bulletinSequences[b]!.compareTo(
+            _bulletinSequences[a]!,
+          );
+          return order != 0 ? order : a.compareTo(b);
+        });
+      }
+      final orderedAuthors = authors.keys.toList()..sort();
+      final keep = <String>{};
+      for (var i = 0; keep.length < maxBulletinsPerChannel; i++) {
+        var added = false;
+        for (final author in orderedAuthors) {
+          if (i < authors[author]!.length &&
+              keep.length < maxBulletinsPerChannel) {
+            keep.add(authors[author]![i]);
+            added = true;
+          }
+        }
+        if (!added) break;
+      }
+      for (final id in ids.where((id) => !keep.contains(id))) {
         bulletins.remove(id);
         evictions['bulletins'] = evictions['bulletins']! + 1;
       }
@@ -757,9 +893,20 @@ class PilotStore {
         !channels.containsKey(incoming.channelId)) {
       return false;
     }
+    if (incoming.channelId != null &&
+        !incoming.verifyForChannel(
+          SignedChannel.fromJson(channels[incoming.channelId]!),
+          policy: policyFor(incoming.channelId!),
+        )) {
+      return false;
+    }
     final channel = incoming.channelId ?? 'legacy:${incoming.sourceId}';
     final ids = bulletins.keys
-        .where((id) => _bulletinChannels[id] == channel)
+        .where(
+          (id) =>
+              _bulletinChannels[id] == channel &&
+              _bulletinPublishers[id] == incoming.sourceId,
+        )
         .toList();
     if (ids.length < maxBulletinsPerChannel) return true;
     ids.sort((a, b) {
@@ -800,7 +947,10 @@ class PilotStore {
     if (channels.length - remove.length >= maxChannels) {
       if (localOwnerId == null) return null;
       final oldestForeign = channels.keys.where(
-        (id) => _channelPublishers[id] != localOwnerId && !remove.contains(id),
+        (id) =>
+            _channelPublishers[id] != localOwnerId &&
+            !managedChannelIds.contains(id) &&
+            !remove.contains(id),
       );
       if (oldestForeign.isEmpty) return null;
       remove.add(oldestForeign.first);
@@ -814,6 +964,7 @@ class PilotStore {
     if (remove == null) return;
     for (final id in remove) {
       channels.remove(id);
+      channelPolicies.remove(id);
       _channelPublishers.remove(id);
       channelSequences.remove(id);
       evictions['channels'] = evictions['channels']! + 1;
@@ -841,7 +992,9 @@ class PilotStore {
       // quota. Public foreign cache churn must not erase locally written news.
       final id = counter == 'bulletins' && localOwnerId != null
           ? map.keys.firstWhere(
-              (id) => _bulletinPublishers[id] != localOwnerId,
+              (id) =>
+                  _bulletinPublishers[id] != localOwnerId &&
+                  !publications.containsKey(id),
               orElse: () => map.keys.first,
             )
           : map.keys.first;
@@ -853,10 +1006,33 @@ class PilotStore {
   Future<void> _compact() async {
     final next = File('${_journal.path}.next');
     final backup = File('${_journal.path}.bak');
-    await next.writeAsString(
-      '${jsonEncode({'kind': 'snapshot', 'peers': peers, 'channels': channels, 'channelSequences': channelSequences, 'bulletins': bulletins, 'bulletinObservations': bulletinObservations, 'receipts': receipts, 'publications': publications, 'events': events, 'sequence': sequence, 'evictions': evictions})}\n',
-      flush: true,
+    // Counts alone do not bound variable-size diagnostic observations/logs.
+    // These optional histories never displace channel keys or owner policies.
+    var receiptBytes = receipts.values.fold<int>(
+      0,
+      (sum, row) => sum + utf8.encode(jsonEncode(row)).length,
     );
+    while (receiptBytes > 2 * 1024 * 1024 && receipts.isNotEmpty) {
+      receiptBytes -= utf8
+          .encode(jsonEncode(receipts.remove(receipts.keys.first)))
+          .length;
+      evictions['receipts'] = evictions['receipts']! + 1;
+    }
+    var eventBytes = events.fold<int>(
+      0,
+      (sum, row) => sum + utf8.encode(jsonEncode(row)).length,
+    );
+    while (eventBytes > 512 * 1024 && events.isNotEmpty) {
+      eventBytes -= utf8.encode(jsonEncode(events.removeAt(0))).length;
+      evictions['events'] = evictions['events']! + 1;
+    }
+    final encoded = utf8.encode(
+      '${jsonEncode({'kind': 'snapshot', 'peers': peers, 'channels': channels, 'channelPolicies': channelPolicies, 'channelSequences': channelSequences, 'bulletins': bulletins, 'bulletinObservations': bulletinObservations, 'receipts': receipts, 'publications': publications, 'events': events, 'sequence': sequence, 'evictions': evictions})}\n',
+    );
+    if (encoded.length > maxJournalRecordBytes) {
+      throw StateError('Snapshot exceeds recovery limit; journal retained.');
+    }
+    await next.writeAsBytes(encoded, flush: true);
     if (await backup.exists()) await backup.delete();
     if (await _journal.exists()) await _journal.rename(backup.path);
     try {
@@ -868,5 +1044,7 @@ class PilotStore {
       rethrow;
     }
     _records = 1;
+    _compactedBytes = encoded.length;
+    if (await backup.exists()) await backup.delete();
   }
 }

@@ -23,6 +23,9 @@
     <application
         android:label="${appLabel}"
         android:allowBackup="false"
+        android:fullBackupContent="@xml/persiantrend_backup_rules"
+        android:dataExtractionRules="@xml/persiantrend_data_extraction_rules"
+        tools:replace="android:fullBackupContent,android:dataExtractionRules"
         android:usesCleartextTraffic="false"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"

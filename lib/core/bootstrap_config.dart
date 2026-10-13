@@ -39,7 +39,9 @@ List<PeerCard> parseBootstrapConfig(String source) {
         entry.keys.any((key) => !_peerFields.contains(key)) ||
         entry['host'] is! String ||
         (entry['host'] as String).trim().isEmpty) {
-      throw const FormatException('Expected a public peer card with a numeric host.');
+      throw const FormatException(
+        'Expected a public peer card with a numeric host.',
+      );
     }
     cards.add(PeerCard.fromJson(entry));
   }
@@ -55,7 +57,9 @@ List<PeerCard> mergeBootstrapPeers(Iterable<PeerCard> cards) {
     final endpoint = '${card.host}|${card.port}';
     if (enrollmentByEndpoint.containsKey(endpoint) &&
         enrollmentByEndpoint[endpoint] != card.tcpEnrollment) {
-      throw const FormatException('Conflicting enrollment settings for a starting-peer endpoint.');
+      throw const FormatException(
+        'Conflicting enrollment settings for a starting-peer endpoint.',
+      );
     }
     enrollmentByEndpoint[endpoint] = card.tcpEnrollment;
     unique.putIfAbsent('${card.id}|$endpoint', () => card);

@@ -36,7 +36,8 @@ class Pear {
       onResume: () => unawaited(_guardedAutoCall(resume)),
       linger: linger,
     );
-    if (platformInfo.backgroundExecution == PearBackgroundExecution.unrestricted) {
+    if (platformInfo.backgroundExecution ==
+        PearBackgroundExecution.unrestricted) {
       // flutter_pear-iqp (E-D4): on a platform with no OS-imposed
       // background execution limit (desktop), auto-suspending on
       // AppLifecycleState.hidden/paused would be actively WRONG, not just
@@ -316,22 +317,41 @@ class Pear {
   ///
   /// [announce] and [acceptUnannounced] pair up for a dial-only peer and the
   /// always-on peer it reaches -- see [PearSwarm.join].
-  Future<PearSwarm> join(PearKey topic, {bool announce = true, bool acceptUnannounced = false}) =>
-      PearSwarm.join(_rpc, topic, announce: announce, acceptUnannounced: acceptUnannounced);
+  Future<PearSwarm> join(
+    PearKey topic, {
+    bool announce = true,
+    bool acceptUnannounced = false,
+  }) => PearSwarm.join(
+    _rpc,
+    topic,
+    announce: announce,
+    acceptUnannounced: acceptUnannounced,
+  );
 
   /// Public connection-route metadata, confined to this app's private cache.
-  Future<Map<String, dynamic>> networkState() async => Map<String, dynamic>.from(
-      (await _rpc.call('persiantrend.network-state')) as Map);
+  Future<Map<String, dynamic>> networkState() async =>
+      Map<String, dynamic>.from(
+        (await _rpc.call('persiantrend.network-state')) as Map,
+      );
 
   /// Call only after PersianTrend's pinned TLS admission has succeeded.
-  Future<void> rememberConnection(PearKey peer, PearKey topic,
-      {Map<String, dynamic>? node}) async {
-    await _rpc.call('persiantrend.remember-peer',
-        {'peer': peer.hex, 'topic': topic.hex, if (node != null) 'node': node});
+  Future<void> rememberConnection(
+    PearKey peer,
+    PearKey topic, {
+    Map<String, dynamic>? node,
+  }) async {
+    await _rpc.call('persiantrend.remember-peer', {
+      'peer': peer.hex,
+      'topic': topic.hex,
+      if (node != null) 'node': node,
+    });
   }
 
-  Future<void> disconnect(PearKey peer) async {
-    await _rpc.call('persiantrend.disconnect', {'peer': peer.hex});
+  Future<void> disconnect(PearKey peer, {bool cooldown = false}) async {
+    await _rpc.call('persiantrend.disconnect', {
+      'peer': peer.hex,
+      'cooldown': cooldown,
+    });
   }
 
   /// Lets this peer reach others through its owner's relay when no direct
@@ -368,7 +388,10 @@ class Pear {
     final digits = relayKey.replaceAll(RegExp(r'[\s-]'), '');
     if (!RegExp(r'^[0-9]{12}$').hasMatch(digits)) {
       throw ArgumentError.value(
-          '(hidden)', 'relayKey', 'a relay key is 12 digits (spaces and dashes are ignored)');
+        '(hidden)',
+        'relayKey',
+        'a relay key is 12 digits (spaces and dashes are ignored)',
+      );
     }
     return digits;
   }
@@ -395,9 +418,12 @@ class Pear {
     Uint8List invite, {
     Uint8List? userData,
     Duration timeout = const Duration(seconds: 30),
-  }) =>
-      PearPairing.acceptInvite(_rpc, invite,
-          userData: userData, timeout: timeout);
+  }) => PearPairing.acceptInvite(
+    _rpc,
+    invite,
+    userData: userData,
+    timeout: timeout,
+  );
 
   /// Opens an Autobase multi-writer data structure (E5.8) — see
   /// [PearBase.open] for the [recipe]/[name]/[key] contract.
@@ -405,8 +431,7 @@ class Pear {
     required PearRecipe recipe,
     String? name,
     PearKey? key,
-  }) =>
-      PearBase.open(_rpc, recipe: recipe, name: name, key: key);
+  }) => PearBase.open(_rpc, recipe: recipe, name: name, key: key);
 
   /// Suspends the worklet (E6.2) — called automatically by [lifecycle] when
   /// its `policy` is [PearLifecyclePolicy.auto], or call this directly at
@@ -421,19 +446,19 @@ class Pear {
   /// for what suspending actually buys you on Android versus what's
   /// entirely outside this library's control (E6.4).
   Future<void> suspend() => _queueLifecycleOp(() async {
-        final wasRunning = worklet.state == WorkletState.running;
-        await worklet.suspend();
-        if (wasRunning) _rpc.notifyWorkletSuspended(true);
-      });
+    final wasRunning = worklet.state == WorkletState.running;
+    await worklet.suspend();
+    if (wasRunning) _rpc.notifyWorkletSuspended(true);
+  });
 
   /// Resumes a suspended worklet (E6.2) — see [suspend]'s doc for the
   /// idempotency/no-spurious-transition/serialization guarantees, mirrored
   /// here for resume.
   Future<void> resume() => _queueLifecycleOp(() async {
-        final wasSuspended = worklet.state == WorkletState.suspended;
-        await worklet.resume();
-        if (wasSuspended) _rpc.notifyWorkletSuspended(false);
-      });
+    final wasSuspended = worklet.state == WorkletState.suspended;
+    await worklet.resume();
+    if (wasSuspended) _rpc.notifyWorkletSuspended(false);
+  });
 
   Future<void> _queueLifecycleOp(Future<void> Function() op) {
     final result = _lifecycleQueue.then((_) => op());
@@ -453,13 +478,16 @@ class Pear {
     try {
       await op();
     } catch (error, stack) {
-      FlutterError.reportError(FlutterErrorDetails(
-        exception: error,
-        stack: stack,
-        library: 'flutter_pear',
-        context:
-            ErrorDescription('PearLifecycle auto-triggered suspend/resume'),
-      ));
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'flutter_pear',
+          context: ErrorDescription(
+            'PearLifecycle auto-triggered suspend/resume',
+          ),
+        ),
+      );
     }
   }
 
