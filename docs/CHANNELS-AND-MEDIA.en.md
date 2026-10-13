@@ -102,6 +102,17 @@ data** or **Text only**. Wi-Fi does not prove high bandwidth; use text only on w
 or costly connections. The image cache is limited to 8 MiB / 96 files. Media requests
 follow public cache availability, not private channel-following choices.
 
+From version 0.8.3, attaching and publishing a photo permits uploading that own
+photo over mobile data regardless of the publisher's download preference.
+Received photos follow that preference when downloading or relaying. Availability
+is announced after publication and after a photo is cached, so a connected reader
+can request it immediately. Transfers resume with a fresh request after reconnect.
+
+For connection troubleshooting, open **Temporary log → Copy connection report**.
+It copies bounded connection counts, network type and discovery status. It excludes
+IP addresses, news, subscriptions and keys. Share it manually if needed; the app
+does not send it automatically. A discovered peer still needs a working connection.
+
 ## Automatic discovery and Iran testing
 
 All networks mode uses reachable Internet/domestic peers, with nearby fallbacks.

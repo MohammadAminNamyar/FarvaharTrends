@@ -4836,6 +4836,17 @@ class _ComposeNewsPageState extends State<_ComposeNewsPage> {
                         ),
                     ],
                   ),
+                  Text(
+                    t(
+                      'تصویر پیوست‌شده می‌تواند از وای‌فای یا اینترنت همراه فرستاده شود؛ دریافت آن به انتخاب خواننده بستگی دارد.',
+                      'Your attached photo can be sent over Wi-Fi or mobile data. Readers control whether they download it.',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: _muted,
+                      height: 1.7,
+                    ),
+                  ),
                   const SizedBox(height: 14),
                 ],
                 const SizedBox(height: 16),

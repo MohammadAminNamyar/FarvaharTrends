@@ -135,6 +135,37 @@ class TemporaryLogView extends StatelessWidget {
                     ],
                   ),
                 ],
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: const ValueKey('temporary-log-copy-report'),
+                  onPressed: app.busy
+                      ? null
+                      : () => app.perform(() async {
+                          final report = await app.copyableConnectionReport();
+                          await Clipboard.setData(ClipboardData(text: report));
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                t(
+                                  'گزارش اتصال کپی شد.',
+                                  'Connection report copied.',
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                  icon: const Icon(Icons.copy_rounded, size: 17),
+                  label: Text(t('کپی گزارش اتصال', 'Copy connection report')),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  t(
+                    'برای بررسی اتصال می‌توانید گزارش را کپی و ارسال کنید. گزارش شامل IP، متن خبر یا کلیدها نیست و خودکار ارسال نمی‌شود.',
+                    'Copy and share this report to help check a connection. It excludes IP addresses, news text and keys. It is not sent automatically.',
+                  ),
+                  style: const TextStyle(color: _muted, height: 1.8),
+                ),
                 if (app.error != null) ...[
                   const SizedBox(height: 12),
                   Text(

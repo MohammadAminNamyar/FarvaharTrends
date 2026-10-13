@@ -656,8 +656,8 @@ class ReaderSettingsCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               t(
-                'متن جداگانه می‌رسد. تصویرها حداکثر ۹۶ کیلوبایت هستند و از بلوتوث فرستاده نمی‌شوند. وای‌فای به‌تنهایی سرعت بالا را تضمین نمی‌کند.',
-                'Text arrives separately. Images are limited to 96 KB and do not travel over Bluetooth. Wi-Fi alone does not guarantee a fast connection.',
+                'این انتخاب برای تصویرهای دریافتی است. تصویری که به خبر خود پیوست می‌کنید، می‌تواند از اینترنت همراه هم فرستاده شود. تصویرها حداکثر ۹۶ کیلوبایت هستند و از بلوتوث فرستاده نمی‌شوند.',
+                'This controls received images. A photo you attach to your own news can also be sent over mobile data. Images are limited to 96 KB and do not travel over Bluetooth.',
               ),
               style: const TextStyle(fontSize: 11, height: 1.7),
             ),

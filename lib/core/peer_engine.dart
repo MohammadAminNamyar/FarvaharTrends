@@ -92,6 +92,7 @@ class PeerEngine {
   String imageMode;
   late final MediaStore _media = MediaStore(directory);
   final Map<String, _ImageDownload> _imageDownloads = {};
+  final Set<String> _publishingImages = {};
   final Identity identity;
   final Identity publisherIdentity;
   final DeliveryMode deliveryMode;
@@ -1795,7 +1796,10 @@ class PeerEngine {
           }
         }
         if (link.modern) {
-          await _requestImages(link, _ids(frame['media'] ?? <String>[], 64));
+          link.availableImages
+            ..clear()
+            ..addAll(_ids(frame['media'] ?? <String>[], 64));
+          await _requestImages(link, link.availableImages.toList());
         }
         if (enablePeerReferrals && !nearbyOnly) {
           await _receiveHelperContacts(link, frame['helperContacts']);
@@ -2192,6 +2196,13 @@ class PeerEngine {
         {'type': 'channelPolicy', 'value': policy},
       {'type': 'bulletin', 'value': value},
     ], except: link.peerId);
+    if (bulletin.image case final image?) {
+      for (final candidate in _links.values.toList()) {
+        if (candidate.availableImages.contains(image.hash)) {
+          await _requestImages(candidate, [image.hash]);
+        }
+      }
+    }
     if (receipt != null &&
         _running &&
         generation == _generation &&
@@ -2444,16 +2455,21 @@ class PeerEngine {
     final descriptor = imageBytes == null
         ? null
         : NewsImage.inspect(imageBytes);
-    if (imageBytes != null) await _media.put(descriptor!, imageBytes);
-    await _publish(
-      runId: runId,
-      text: text,
-      channelId: channelId,
-      signer: credentials.$1,
-      authorization: credentials.$2,
-      image: descriptor,
-      byline: channelKeys?.entries[channelId]?['nickname'] as String?,
-    );
+    if (descriptor != null) _publishingImages.add(descriptor.hash);
+    try {
+      if (imageBytes != null) await _media.put(descriptor!, imageBytes);
+      await _publish(
+        runId: runId,
+        text: text,
+        channelId: channelId,
+        signer: credentials.$1,
+        authorization: credentials.$2,
+        image: descriptor,
+        byline: channelKeys?.entries[channelId]?['nickname'] as String?,
+      );
+    } finally {
+      if (descriptor != null) _publishingImages.remove(descriptor.hash);
+    }
   });
 
   Future<void> _publish({
@@ -2504,7 +2520,7 @@ class PeerEngine {
         if (_store.channelPolicies[channelId] case final policy?)
           {'type': 'channelPolicy', 'value': policy},
         {'type': 'bulletin', 'value': bulletin.toJson()},
-      ]);
+      ], announceImages: image != null);
     } else {
       // Diagnostic tests retain their existing awaited send behavior.
       await _broadcast({'type': 'bulletin', 'value': bulletin.toJson()});
@@ -2512,7 +2528,11 @@ class PeerEngine {
     _notify();
   }
 
-  void _queueGossip(List<Map<String, dynamic>> frames, {String? except}) {
+  void _queueGossip(
+    List<Map<String, dynamic>> frames, {
+    String? except,
+    bool announceImages = false,
+  }) {
     if (!_running || _links.isEmpty) return;
     if (_backgroundGossip >= 16) {
       // The durable cache and future inventories still contain this update.
@@ -2532,6 +2552,12 @@ class PeerEngine {
             for (final frame in frames) {
               if (!_running || generation != _generation || link.closed) return;
               await _send(link, frame);
+            }
+            if (announceImages &&
+                _running &&
+                generation == _generation &&
+                !link.closed) {
+              await _sendImageInventory(link);
             }
           }),
         );
@@ -2575,7 +2601,7 @@ class PeerEngine {
             .map((id) => _store.channelPolicies[id]?['id'])
             .whereType<String>()
             .toList(),
-      if (link.modern) 'media': _media.hashes,
+      if (link.modern) 'media': await _imageInventory(link),
       'bulletins': _store.bulletins.entries
           .where(
             (e) =>
@@ -2771,6 +2797,9 @@ class PeerEngine {
     unawaited(link.subscription?.cancel());
     if (identical(_links[link.peerId], link)) {
       _links.remove(link.peerId);
+      _imageDownloads.removeWhere(
+        (_, download) => download.peerId == link.peerId,
+      );
       unawaited(
         _event(
           'disconnected',
@@ -3304,6 +3333,7 @@ class _Link {
   Completer<void>? writeReady;
   final List<int> buffer = [];
   final Set<String> announcedChannels = {};
+  final Set<String> availableImages = {};
   Future<void> processing = Future<void>.value();
   final PeerWriteQueue writer = PeerWriteQueue();
   int receiptOffset = 0;

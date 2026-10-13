@@ -21,6 +21,7 @@ import 'core/identity_roles.dart';
 import 'core/delivery_mode.dart';
 import 'core/delivery_mode_store.dart';
 import 'core/channel_preferences.dart';
+import 'core/connection_report.dart' as diagnostics;
 import 'core/models.dart';
 import 'core/peer_engine.dart';
 import 'core/service_lifecycle.dart';
@@ -293,6 +294,7 @@ void serviceMain(ServiceInstance service) async {
             readerLanguage = command['language'] as String? ?? 'fa';
             await reader?.load();
             if (reader != null) engine!.imageMode = reader.images;
+            await engine!.refreshImageTransfers();
             await updateReader(await engine!.snapshot());
           case 'export':
             service.invoke('report', {
@@ -925,6 +927,20 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String> copyableConnectionReport() async {
+    await refresh();
+    return const JsonEncoder.withIndent('  ').convert(
+      diagnostics.connectionReport(
+        snapshot: snapshot,
+        device: device,
+        running: running,
+        activeMode: activeMode,
+        deliveryMode: deliveryMode.name,
+        connectionId: identity?.id,
+      ),
+    );
+  }
+
   Future<void> clearTemporaryLog() async {
     _ensureAlive();
     await _reconcileService();
@@ -1168,6 +1184,7 @@ class AppController extends ChangeNotifier {
   Future<void> setImageMode(String mode) async {
     await _reader?.setImages(mode);
     _local?.imageMode = mode;
+    await _local?.refreshImageTransfers();
     await _readerSettingsChanged();
     notifyListeners();
   }

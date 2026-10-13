@@ -10,10 +10,12 @@ class _ImageDownload {
 
 extension ImageTransfer on PeerEngine {
   Future<void> _pruneImages() async {
-    final referenced = _store.bulletins.values
-        .map((v) => SignedBulletin.fromJson(v).image?.hash)
-        .whereType<String>()
-        .toSet();
+    final referenced =
+        _store.bulletins.values
+            .map((v) => SignedBulletin.fromJson(v).image?.hash)
+            .whereType<String>()
+            .toSet()
+          ..addAll(_publishingImages);
     _imageDownloads.removeWhere((hash, _) => !referenced.contains(hash));
     await _media.retain(referenced);
   }
@@ -30,16 +32,60 @@ extension ImageTransfer on PeerEngine {
         link.transport == PeerTransport.wifiDirect) {
       return true;
     }
-    final state = await deviceState();
-    return state['network'] == 'wifi';
+    try {
+      final state = await deviceState();
+      return state['network'] == 'wifi';
+    } catch (_) {
+      // A local network-state failure must not blame or disconnect a peer.
+      return false;
+    }
   }
 
-  NewsImage? _referencedImage(String hash) {
-    for (final raw in _store.bulletins.values) {
-      final image = SignedBulletin.fromJson(raw).image;
-      if (image?.hash == hash) return image;
+  (NewsImage, bool)? _referencedImage(String hash) {
+    (NewsImage, bool)? received;
+    for (final entry in _store.bulletins.entries) {
+      final image = SignedBulletin.fromJson(entry.value).image;
+      if (image?.hash == hash) {
+        final local = _store.publications.containsKey(entry.key);
+        if (local) return (image!, true);
+        received ??= (image!, false);
+      }
     }
-    return null;
+    return received;
+  }
+
+  Future<List<String>> _imageInventory(_Link link) async {
+    if (!link.modern || link.transport == PeerTransport.bluetooth) return [];
+    if (await _imagesAllowed(link)) return _media.hashes;
+    // Attaching a photo explicitly authorizes publishing it, independently of
+    // automatic downloads. Received photos still follow the reader's policy.
+    final own = <String>{};
+    for (final id in _store.publications.keys) {
+      final raw = _store.bulletins[id];
+      if (raw == null) continue;
+      final hash = SignedBulletin.fromJson(raw).image?.hash;
+      if (hash != null) own.add(hash);
+    }
+    return _media.hashes.where(own.contains).toList();
+  }
+
+  Future<void> _sendImageInventory(_Link link) async {
+    if (!link.modern || link.transport == PeerTransport.bluetooth) return;
+    await _send(link, {
+      'type': 'inventory',
+      'features': ['channel-v2'],
+      'media': await _imageInventory(link),
+      'channels': <String>[],
+      'bulletins': <String>[],
+      'receipts': <String>[],
+    });
+  }
+
+  Future<void> refreshImageTransfers() async {
+    for (final link in _links.values.toList()) {
+      await _requestImages(link, link.availableImages.toList());
+      await _sendImageInventory(link);
+    }
   }
 
   Future<void> _requestImages(_Link link, List<String> available) async {
@@ -49,13 +95,16 @@ extension ImageTransfer on PeerEngine {
           !_links.containsKey(v.peerId),
     );
     if (!await _imagesAllowed(link)) return;
+    if (!_running || link.closed || !identical(_links[link.peerId], link)) {
+      return;
+    }
     for (final hash in available) {
       if (_imageDownloads.length >= 4 ||
           _imageDownloads.values.where((v) => v.peerId == link.peerId).length >=
               2) {
         break;
       }
-      final image = _referencedImage(hash);
+      final image = _referencedImage(hash)?.$1;
       if (image == null ||
           _media.has(hash) ||
           _imageDownloads.containsKey(hash)) {
@@ -77,7 +126,7 @@ extension ImageTransfer on PeerEngine {
   }
 
   Future<void> _serveImage(_Link link, Map<String, dynamic> frame) async {
-    if (!await _imagesAllowed(link)) return;
+    if (!link.modern || link.transport == PeerTransport.bluetooth) return;
     final hash = frame['hash'], offset = frame['offset'];
     if (frame.length != 3 ||
         hash is! String ||
@@ -89,8 +138,9 @@ extension ImageTransfer on PeerEngine {
       throw const FormatException('Invalid image request.');
     }
     if (!_allowRequests(link, 1)) return;
-    final descriptor = _referencedImage(hash);
-    if (descriptor == null || offset >= descriptor.bytes) return;
+    final reference = _referencedImage(hash);
+    if (reference == null || offset >= reference.$1.bytes) return;
+    if (!reference.$2 && !await _imagesAllowed(link)) return;
     final bytes = await _media.read(hash);
     if (bytes == null) return;
     await _sendResponse(link, 'image:$hash:$offset', {
@@ -130,6 +180,11 @@ extension ImageTransfer on PeerEngine {
       if (pending.data.length == pending.image.bytes) {
         await _media.put(pending.image, pending.data.takeBytes());
         _imageDownloads.remove(hash);
+        if (_referencedImage(hash) == null) {
+          await _pruneImages();
+          return;
+        }
+        _queueGossip(const [], announceImages: true);
         _notify();
       } else {
         await _send(link, {
@@ -138,9 +193,13 @@ extension ImageTransfer on PeerEngine {
           'offset': pending.data.length,
         });
       }
-    } catch (_) {
+    } on FormatException {
       _imageDownloads.remove(hash);
       _discardPublisherObject(link, 'invalid_image');
+    } on FileSystemException {
+      _imageDownloads.remove(hash);
+      _lastError = 'image_storage_failed';
+      _notify();
     }
   }
 }

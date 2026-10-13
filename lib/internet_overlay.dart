@@ -161,6 +161,9 @@ class InternetOverlay {
               ? 'connected'
               : 'discovering',
           'discoveryStage': network['discoveryStage'],
+          'dhtOnline': network['dhtOnline'],
+          'dhtFirewalled': network['dhtFirewalled'],
+          'dhtRandomized': network['dhtRandomized'],
           'discoveryRefreshes': network['discoveryRefreshes'],
           'cachedRoutingCount': network['cachedRoutingCount'],
           'cachedPeerCount': network['cachedPeerCount'],

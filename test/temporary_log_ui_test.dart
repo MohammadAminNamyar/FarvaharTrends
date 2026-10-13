@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -86,6 +87,18 @@ void main() {
           await tester.tap(find.byKey(const ValueKey('temporary-log-copy-id')));
           await tester.pumpAndSettle();
           expect(copiedText, identity.id.substring(0, 12));
+          await tester.ensureVisible(
+            find.byKey(const ValueKey('temporary-log-copy-report')),
+          );
+          await tester.tap(
+            find.byKey(const ValueKey('temporary-log-copy-report')),
+          );
+          await tester.pumpAndSettle();
+          final report = jsonDecode(copiedText!) as Map;
+          expect(report['reportVersion'], 1);
+          expect(report['connectionId'], identity.id.substring(0, 12));
+          expect(copiedText, isNot(contains('203.0.113.22')));
+          expect(copiedText, isNot(contains('Private news text')));
           await tester.pump(const Duration(seconds: 4));
           await tester.pumpAndSettle();
           expect(
@@ -231,6 +244,8 @@ class _LogController extends AppController {
     };
   }
   int clearCalls = 0;
+  @override
+  Future<void> refresh() async {}
   @override
   Future<void> clearTemporaryLog() async {
     clearCalls++;

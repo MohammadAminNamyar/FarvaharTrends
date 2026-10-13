@@ -329,10 +329,22 @@ class Pear {
   );
 
   /// Public connection-route metadata, confined to this app's private cache.
-  Future<Map<String, dynamic>> networkState() async =>
-      Map<String, dynamic>.from(
-        (await _rpc.call('persiantrend.network-state')) as Map,
-      );
+  Future<Map<String, dynamic>> networkState() async {
+    final network = Map<String, dynamic>.from(
+      (await _rpc.call('persiantrend.network-state')) as Map,
+    );
+    final status = await _rpc.call(PearMethod.dhtStatus);
+    if (status is Map) {
+      for (final field in {
+        'online': 'dhtOnline',
+        'firewalled': 'dhtFirewalled',
+        'randomized': 'dhtRandomized',
+      }.entries) {
+        if (status[field.key] is bool) network[field.value] = status[field.key];
+      }
+    }
+    return network;
+  }
 
   /// Call only after PersianTrend's pinned TLS admission has succeeded.
   Future<void> rememberConnection(

@@ -80,6 +80,7 @@ void main() {
     Identity identity, {
     ChannelKeyStore? keys,
     String images = 'any',
+    String network = 'wifi',
   }) {
     final value = PeerEngine(
       directory: Directory('${scratch.path}/$label'),
@@ -88,7 +89,7 @@ void main() {
       listenPort: 0,
       enableLanDiscovery: false,
       imageMode: images,
-      deviceState: () async => {'network': 'wifi', 'isLocked': true},
+      deviceState: () async => {'network': network, 'isLocked': true},
       onStatus: (_) {},
     );
     engines.add(value);
@@ -409,6 +410,182 @@ void main() {
     },
     timeout: const Timeout(Duration(minutes: 2)),
   );
+  for (final preference in ['wifiOnly', 'never']) {
+    test(
+      'mobile publisher sends an attached image with $preference downloads',
+      () async {
+        final a = engine(
+          'mobile-image-source',
+          owner,
+          keys: vault(),
+          images: preference,
+          network: 'cellular',
+        );
+        final b = engine('wifi-image-reader', other, images: 'wifiOnly');
+        final created = await a.createChannel(name: 'Mobile image publisher');
+        final bytes = await File('test/fixtures/news-small.jpg').readAsBytes();
+        // Publishing before pairing exercises inventory arriving before news.
+        await a.publishToChannel(
+          channelId: created.id,
+          text: 'An attached image',
+          imageBytes: bytes,
+        );
+        await pair(a, b);
+        await until(
+          () async => (await b.snapshot())['bulletinCount'] == 1,
+          seconds: 5,
+        );
+        await until(
+          () async =>
+              ((((await b.snapshot())['bulletins'] as List).single
+                      as Map)['image']
+                  as Map)['path'] !=
+              null,
+          seconds: 5,
+        );
+        final news = ((await b.snapshot())['bulletins'] as List).single as Map;
+        expect(
+          await File((news['image'] as Map)['path'] as String).readAsBytes(),
+          bytes,
+        );
+        expect(a.imageMode, preference);
+        expect(b.imageMode, 'wifiOnly');
+      },
+    );
+  }
+
+  test(
+    'an image attached after connection is announced without a periodic wait',
+    () async {
+      final a = engine(
+        'live-mobile-publisher',
+        owner,
+        keys: vault(),
+        images: 'wifiOnly',
+        network: 'cellular',
+      );
+      final b = engine('live-wifi-reader', other, images: 'wifiOnly');
+      await pair(a, b);
+      final created = await a.createChannel(name: 'Live photo');
+      final bytes = await File('test/fixtures/news-small.jpg').readAsBytes();
+      await a.publishToChannel(
+        channelId: created.id,
+        text: 'A fresh photo',
+        imageBytes: bytes,
+      );
+      await until(
+        () async => (await b.snapshot())['bulletinCount'] == 1,
+        seconds: 5,
+      );
+      await until(
+        () async =>
+            ((((await b.snapshot())['bulletins'] as List).single
+                    as Map)['image']
+                as Map)['path'] !=
+            null,
+        seconds: 5,
+      );
+    },
+  );
+
+  test(
+    'a cellular reader keeps Wi-Fi-only downloads until explicitly enabled',
+    () async {
+      final a = engine('policy-publisher', owner, keys: vault());
+      final b = engine(
+        'cellular-reader',
+        other,
+        images: 'wifiOnly',
+        network: 'cellular',
+      );
+      await pair(a, b);
+      final created = await a.createChannel(name: 'Reader policy');
+      final bytes = await File('test/fixtures/news-small.jpg').readAsBytes();
+      await a.publishToChannel(
+        channelId: created.id,
+        text: 'Text with optional photo',
+        imageBytes: bytes,
+      );
+      await until(
+        () async => (await b.snapshot())['bulletinCount'] == 1,
+        seconds: 5,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(
+        ((((await b.snapshot())['bulletins'] as List).single as Map)['image']
+            as Map)['path'],
+        isNull,
+      );
+      b.imageMode = 'any';
+      await b.refreshImageTransfers();
+      await until(
+        () async =>
+            ((((await b.snapshot())['bulletins'] as List).single
+                    as Map)['image']
+                as Map)['path'] !=
+            null,
+        seconds: 5,
+      );
+    },
+  );
+
+  test(
+    'received images do not gain the publisher mobile-upload exception',
+    () async {
+      final a = engine('relay-source', owner, keys: vault());
+      final b = engine(
+        'cellular-relay',
+        other,
+        images: 'any',
+        network: 'cellular',
+      );
+      await pair(a, b);
+      final created = await a.createChannel(name: 'Relay photo');
+      final bytes = await File('test/fixtures/news-small.jpg').readAsBytes();
+      await a.publishToChannel(
+        channelId: created.id,
+        text: 'A relayed photo',
+        imageBytes: bytes,
+      );
+      await until(
+        () async => (await b.snapshot())['bulletinCount'] == 1,
+        seconds: 5,
+      );
+      await until(
+        () async =>
+            ((((await b.snapshot())['bulletins'] as List).single
+                    as Map)['image']
+                as Map)['path'] !=
+            null,
+        seconds: 5,
+      );
+      await a.stop();
+      b.imageMode = 'wifiOnly';
+      final c = engine('relay-reader', editor, images: 'wifiOnly');
+      await pair(b, c);
+      await until(
+        () async => (await c.snapshot())['bulletinCount'] == 1,
+        seconds: 5,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(
+        ((((await c.snapshot())['bulletins'] as List).single as Map)['image']
+            as Map)['path'],
+        isNull,
+      );
+      b.imageMode = 'any';
+      await b.refreshImageTransfers();
+      await until(
+        () async =>
+            ((((await c.snapshot())['bulletins'] as List).single
+                    as Map)['image']
+                as Map)['path'] !=
+            null,
+        seconds: 5,
+      );
+    },
+  );
+
   test(
     'image cache rejects altered bytes, bombs and descriptor substitution',
     () async {
