@@ -19,46 +19,77 @@ void main() {
 
   File file() => File('${directory.path}/receiving-policy.json');
 
-  test('defaults to off and round trips an explicit choice', () async {
+  test('defaults to restart off, announce on; round trips choices', () async {
     final store = ReceivingPolicyStore(directory);
-    expect(await store.load(), isFalse);
+    final initial = await store.load();
+    expect(initial.restartAfterReboot, isFalse);
+    expect(initial.internetAnnounce, isTrue);
     expect(store.recovered, isFalse);
-    await store.save(restartAfterReboot: true);
+    await store.save(
+      const ReceivingPolicy(restartAfterReboot: true, internetAnnounce: false),
+    );
     expect(jsonDecode(await file().readAsString()), {
-      'version': 1,
+      'version': 2,
       'restartAfterReboot': true,
+      'internetAnnounce': false,
     });
-    expect(await ReceivingPolicyStore(directory).load(), isTrue);
-    await store.save(restartAfterReboot: false);
-    expect(await ReceivingPolicyStore(directory).load(), isFalse);
+    final loaded = await ReceivingPolicyStore(directory).load();
+    expect(loaded.restartAfterReboot, isTrue);
+    expect(loaded.internetAnnounce, isFalse);
+    await store.save(const ReceivingPolicy());
+    final reset = await ReceivingPolicyStore(directory).load();
+    expect(reset.restartAfterReboot, isFalse);
+    expect(reset.internetAnnounce, isTrue);
     expect(await File('${file().path}.next').exists(), isFalse);
     expect(await File('${file().path}.bak').exists(), isFalse);
+  });
+
+  test('a version 1 file loads with the default announce setting', () async {
+    await file().writeAsString('{"version":1,"restartAfterReboot":true}');
+    final store = ReceivingPolicyStore(directory);
+    final policy = await store.load();
+    expect(policy.restartAfterReboot, isTrue);
+    expect(policy.internetAnnounce, isTrue);
+    expect(store.recovered, isFalse);
+  });
+
+  test('copyWith changes one field at a time', () {
+    const base = ReceivingPolicy();
+    expect(base.copyWith(internetAnnounce: false).restartAfterReboot, isFalse);
+    expect(base.copyWith(internetAnnounce: false).internetAnnounce, isFalse);
+    expect(base.copyWith(restartAfterReboot: true).internetAnnounce, isTrue);
   });
 
   for (final content in [
     '{broken',
     '{"version":1,"restartAfterReboot":"yes"}',
     '{"version":2,"restartAfterReboot":true}',
+    '{"version":2,"restartAfterReboot":true,"internetAnnounce":"no"}',
+    '{"version":3,"restartAfterReboot":true,"internetAnnounce":true}',
     '{"version":1,"restartAfterReboot":true,"extra":1}',
     '[]',
   ]) {
     test('corrupt content $content fails closed and is quarantined', () async {
       await file().writeAsString(content);
       final store = ReceivingPolicyStore(directory);
-      expect(await store.load(), isFalse);
+      final policy = await store.load();
+      expect(policy.restartAfterReboot, isFalse);
+      expect(policy.internetAnnounce, isTrue);
       expect(store.recovered, isTrue);
       expect(await file().exists(), isFalse);
       final again = ReceivingPolicyStore(directory);
-      expect(await again.load(), isFalse);
+      expect((await again.load()).restartAfterReboot, isFalse);
       expect(again.recovered, isFalse);
     });
   }
 
   test('an interrupted commit never re-arms the service', () async {
-    await ReceivingPolicyStore(directory).save(restartAfterReboot: true);
+    await ReceivingPolicyStore(
+      directory,
+    ).save(const ReceivingPolicy(restartAfterReboot: true));
     await File('${file().path}.next').writeAsString('{}');
     final store = ReceivingPolicyStore(directory);
-    expect(await store.load(), isFalse);
+    expect((await store.load()).restartAfterReboot, isFalse);
     expect(store.recovered, isTrue);
   });
 
@@ -67,7 +98,7 @@ void main() {
       '{"version":1,"restartAfterReboot":true,"pad":"${'x' * 300}"}',
     );
     final store = ReceivingPolicyStore(directory);
-    expect(await store.load(), isFalse);
+    expect((await store.load()).restartAfterReboot, isFalse);
     expect(store.recovered, isTrue);
   });
 }

@@ -692,6 +692,36 @@ class ReaderSettingsCard extends StatelessWidget {
               style: const TextStyle(fontSize: 11, height: 1.7),
             ),
             const Divider(height: 28),
+            SwitchListTile.adaptive(
+              key: const ValueKey('internet-announce'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                t(
+                  'اعلام حضور در شبکهٔ اینترنتی',
+                  'Announce on the Internet network',
+                ),
+              ),
+              subtitle: Text(
+                t(
+                  'روشن: گوشی‌های دیگر می‌توانند این دستگاه را از راه اینترنت پیدا کنند. خاموش: فقط خودتان به دیگران وصل می‌شوید.',
+                  'On: other phones can find this device over the Internet. Off: only you connect out to others.',
+                ),
+              ),
+              value: app.internetAnnounce,
+              onChanged: app.busy
+                  ? null
+                  : (value) =>
+                        app.perform(() => app.setInternetAnnounce(value)),
+            ),
+            Text(
+              t(
+                'خاموش کردن، حضور این دستگاه را از فهرست عمومی کشف حذف می‌کند و دریافت را دوباره راه‌اندازی می‌کند. نشانی شما همچنان برای گوشی‌هایی که به آن‌ها وصل می‌شوید دیده می‌شود. این گزینه ناشناسی ایجاد نمی‌کند.',
+                'Turning this off removes this device from the public discovery list and restarts receiving. Your address stays visible to the phones you connect to. This is not anonymity.',
+              ),
+              key: const ValueKey('internet-announce-explanation'),
+              style: const TextStyle(fontSize: 11, height: 1.7),
+            ),
+            const Divider(height: 28),
             Text(
               app.appVersion == 'development'
                   ? t('نسخهٔ توسعه', 'Development build')

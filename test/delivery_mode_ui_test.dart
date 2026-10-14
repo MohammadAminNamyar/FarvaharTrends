@@ -336,6 +336,47 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Reader settings expose the Internet announce choice', (
+    tester,
+  ) async {
+    final app = await showApp(tester);
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('internet-announce'));
+    await tester.dragUntilVisible(
+      toggle,
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('اعلام حضور در شبکهٔ اینترنتی'), findsOneWidget);
+    expect(find.textContaining('ناشناسی ایجاد نمی‌کند'), findsOneWidget);
+    expect(app.internetAnnounce, isTrue);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(app.announceChanges, [false]);
+    expect(app.internetAnnounce, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('English announce copy does not promise anonymity', (
+    tester,
+  ) async {
+    await showApp(tester, language: 'en');
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('internet-announce'));
+    await tester.dragUntilVisible(
+      toggle,
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Announce on the Internet network'), findsOneWidget);
+    expect(find.textContaining('This is not anonymity'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('English reboot opt-in copy names what still stops it', (
     tester,
   ) async {
@@ -450,6 +491,7 @@ class _ModeController extends AppController {
 
   final changes = <DeliveryMode>[];
   final restartChanges = <bool>[];
+  final announceChanges = <bool>[];
   Completer<void>? modeGate;
   bool failNextChange = false;
 
@@ -457,6 +499,13 @@ class _ModeController extends AppController {
   Future<void> setRestartAfterReboot(bool value) async {
     restartAfterReboot = value;
     restartChanges.add(value);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setInternetAnnounce(bool value) async {
+    internetAnnounce = value;
+    announceChanges.add(value);
     notifyListeners();
   }
 

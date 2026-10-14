@@ -1,6 +1,20 @@
-# Shutdown roadmap — design proposals only
+# Shutdown roadmap — design proposals and implementation status
 
-None of the proposals below is implemented by this document or establishes
+Status as of 0.8.4. Each section below starts with what is now implemented in
+the code and what remains design work. Nothing here establishes anonymity,
+nationwide reachability, or five-minute shutdown delivery; the field evidence
+listed under each section is still required.
+
+| Area | Implemented in 0.8.4 | Still open |
+| --- | --- | --- |
+| Domestic discovery | Bootstrap document v2 with numeric operator DHT nodes; runtime import/export of starting-peer lists (paste, QR display) with a 90-day app-private store; DHT nodes handed to the worklet ahead of the hyperdht defaults | QR scanning, address-based direct dial of overlay peers, TCP/TLS fallback for blocked UDP, port randomization, any Iranian field measurement |
+| Discovery observability | Beacon v2 and Wi-Fi Direct TXT carry a rotating session token instead of the certificate; certificates travel only inside TLS 1.3 via a bounded trust-on-first-connect dial; phones join the DHT as ephemeral clients; `announce` is a per-install setting | Threat-model review, passive-capture validation on real radios, BLE advertisement review, announcing-helper consent flow |
+| Native loopback proxies | 32-byte per-flow prefaces on every loopback hand-off, single use, bounded failed attempts, invalidated on restart | Device test with a hostile co-installed app |
+| Restart after process death | Opt-in "Keep receiving after reboot": boot receiver plus sticky service gated on the saved preference, disarmed by an explicit Stop | Physical-device reboot/kill/force-stop/OEM trials and overnight battery cost |
+| Signing and key rotation | Nothing; RSA PKCS#1 v1.5 remains | Everything in that section; it changes the wire format and invalidates existing identities, so it needs its own versioned rollout |
+| Maintainability and dates | Jalali calendar in Farsi date display, one localization/digit helper module, typed snapshot DTOs, `pilot_app.dart` split into per-screen files | ARB/intl migration, DTO adoption in the legacy diagnostics page |
+
+None of the proposals below establishes
 anonymity, nationwide reachability, or five-minute shutdown delivery. Keep the
 one-APK design: each installation can consume and forward public signed news over
 working links. Fixed domestic servers are not an assumed requirement; prioritize

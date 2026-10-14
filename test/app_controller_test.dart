@@ -480,7 +480,7 @@ void main() {
         await app.stop();
         expect(calls, [false, true, false]);
         expect(app.restartAfterReboot, isTrue);
-        expect(await ReceivingPolicyStore(directory).load(), isTrue);
+        expect((await ReceivingPolicyStore(directory).load()).restartAfterReboot, isTrue);
         // The next normal start re-arms; a local-only start never does.
         await app.start(active: true);
         expect(calls.last, isTrue);
@@ -505,7 +505,7 @@ void main() {
       expect(calls, [false, true]);
       await app.setRestartAfterReboot(false);
       expect(calls, [false, true, false]);
-      expect(await ReceivingPolicyStore(directory).load(), isFalse);
+      expect((await ReceivingPolicyStore(directory).load()).restartAfterReboot, isFalse);
     });
 
     test('a corrupt policy file loads as off with a localized warning', () async {
@@ -514,7 +514,7 @@ void main() {
       addTearDown(app.dispose);
       await app.loadReceivingPolicy();
       expect(app.restartAfterReboot, isFalse);
-      expect(app.error, contains('راه‌اندازی مجدد'));
+      expect(app.error, contains('تنظیمات دریافت'));
     });
   });
 

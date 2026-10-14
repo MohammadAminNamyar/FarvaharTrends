@@ -394,6 +394,8 @@ void serviceMain(ServiceInstance service) async {
     await reader.load();
     final preferences = ChannelPreferences(directory);
     await preferences.load();
+    final receivingPolicy = await ReceivingPolicyStore(directory).load();
+    final bootstrap = await loadBootstrapConfig(directory);
     engine = PeerEngine(
       protectedChannelIds: preferences.followed.difference(preferences.blocked),
       channelKeys: channelKeyVault(),
@@ -405,7 +407,7 @@ void serviceMain(ServiceInstance service) async {
       localWifiTransport: Platform.isAndroid
           ? AndroidLocalWifiTransport()
           : null,
-      bootstrapPeers: await loadBootstrapPeers(directory),
+      bootstrapPeers: bootstrap.peers,
       enablePeerReferrals: true,
       acceptTcpEnrollment: true,
       enableLanDiscovery: !cacheOnlyTest,
@@ -434,6 +436,12 @@ void serviceMain(ServiceInstance service) async {
       if (!cacheOnlyTest) {
         overlay = InternetOverlay(
           engine,
+          // Phones are ephemeral DHT clients: they never answer routing
+          // queries from strangers. Operator-supplied domestic DHT nodes from
+          // the bootstrap document are tried before the hyperdht defaults.
+          announce: receivingPolicy.internetAnnounce,
+          dhtBootstrap: bootstrap.dhtBootstrap,
+          dhtEphemeral: true,
           networkKey: () async {
             final state = await readDeviceState();
             return state['stateUnavailable'] == true
@@ -558,6 +566,11 @@ class AppController extends ChangeNotifier {
   /// reboot or an OS kill. An explicit in-app Stop disarms the service for
   /// the session without changing this saved choice.
   bool restartAfterReboot = false;
+
+  /// Saved choice: announce this installation on the public Internet
+  /// discovery topic. Off means reader-only on the Internet: the phone still
+  /// dials peers it learns about, but publishes no presence to the DHT.
+  bool internetAnnounce = true;
   final Future<void> Function(bool autoStartOnBoot)? _configureServiceHook;
   PeerEngine? _local;
   NearbyTransports? _localNearby;
@@ -775,29 +788,59 @@ class AppController extends ChangeNotifier {
   Future<void> loadReceivingPolicy() async {
     _ensureAlive();
     final store = ReceivingPolicyStore(_directory!);
-    restartAfterReboot = await store.load();
+    final policy = await store.load();
+    restartAfterReboot = policy.restartAfterReboot;
+    internetAnnounce = policy.internetAnnounce;
     if (store.recovered) {
       error = languageCode == 'fa'
-          ? 'تنظیم ادامهٔ دریافت پس از راه‌اندازی مجدد قابل خواندن نبود و خاموش شد.'
-          : 'The restart-after-reboot setting could not be read and was turned off.';
+          ? 'تنظیمات دریافت قابل خواندن نبود و به حالت پیش‌فرض برگشت.'
+          : 'The receiving settings could not be read and were reset to their defaults.';
     }
     notifyListeners();
   }
+
+  ReceivingPolicy get _receivingPolicy => ReceivingPolicy(
+    restartAfterReboot: restartAfterReboot,
+    internetAnnounce: internetAnnounce,
+  );
+
+  Future<void> _persistReceivingPolicy(ReceivingPolicy policy) async {
+    try {
+      await ReceivingPolicyStore(_directory!).save(policy);
+    } catch (_) {
+      throw StateError(
+        languageCode == 'fa'
+            ? 'تنظیم دریافت ذخیره نشد. فضای ذخیره‌سازی را بررسی کنید و دوباره تلاش کنید.'
+            : 'The receiving setting could not be saved. Check available storage and try again.',
+      );
+    }
+  }
+
+  /// Persist the announce choice, then restart receiving so the Internet
+  /// overlay joins the discovery topic with the new setting. Nearby and
+  /// cached-contact paths are unaffected either way.
+  Future<void> setInternetAnnounce(bool value) => _saveSettings(() async {
+    if (value == internetAnnounce) return;
+    await _persistReceivingPolicy(
+      _receivingPolicy.copyWith(internetAnnounce: value),
+    );
+    internetAnnounce = value;
+    notifyListeners();
+    if (!running || deliveryMode == DeliveryMode.nearbyOnly) return;
+    final active = activeMode;
+    await stop();
+    await start(active: active);
+    notifyListeners();
+  });
 
   /// Persist the opt-in first, then re-arm the running service to match.
   /// While receiving is stopped the service stays disarmed until the next
   /// normal start, so an explicit Stop is never undone by a reboot.
   Future<void> setRestartAfterReboot(bool value) => _saveSettings(() async {
     if (value == restartAfterReboot) return;
-    try {
-      await ReceivingPolicyStore(_directory!).save(restartAfterReboot: value);
-    } catch (_) {
-      throw StateError(
-        languageCode == 'fa'
-            ? 'تنظیم ادامهٔ دریافت ذخیره نشد. فضای ذخیره‌سازی را بررسی کنید و دوباره تلاش کنید.'
-            : 'The restart setting could not be saved. Check available storage and try again.',
-      );
-    }
+    await _persistReceivingPolicy(
+      _receivingPolicy.copyWith(restartAfterReboot: value),
+    );
     restartAfterReboot = value;
     await _configureService(autoStartOnBoot: value && running);
     notifyListeners();
