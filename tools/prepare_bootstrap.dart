@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:persian_trend/core/bootstrap_config.dart';
-import 'package:persian_trend/core/models.dart';
+import 'package:farvahar_trends/core/bootstrap_config.dart';
+import 'package:farvahar_trends/core/models.dart';
 
 /// Validate public relay exports with the same parser used by the application.
 /// This command opens no network connection and never reads a private identity.
@@ -83,7 +83,7 @@ Future<void> main(List<String> arguments) async {
       flush: true,
     );
     await File('${directory.path}/dart-defines.json').writeAsString(
-      jsonEncode({'PERSIANTREND_BOOTSTRAP_JSON': encoded}),
+      jsonEncode({'FARVAHARTRENDS_BOOTSTRAP_JSON': encoded}),
       flush: true,
     );
     stdout.writeln(

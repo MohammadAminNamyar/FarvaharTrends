@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/user_errors.dart';
+import 'package:farvahar_trends/core/user_errors.dart';
 
 void main() {
   test('known errors map to stable codes and unknown text stays private', () {

@@ -324,6 +324,7 @@ class Pear {
     bool acceptUnannounced = false,
     List<String> dhtBootstrap = const [],
     bool dhtEphemeral = true,
+    bool publicBootstrap = true,
   }) => PearSwarm.join(
     _rpc,
     topic,
@@ -331,12 +332,13 @@ class Pear {
     acceptUnannounced: acceptUnannounced,
     dhtBootstrap: dhtBootstrap,
     dhtEphemeral: dhtEphemeral,
+    publicBootstrap: publicBootstrap,
   );
 
   /// Public connection-route metadata, confined to this app's private cache.
   Future<Map<String, dynamic>> networkState() async {
     final network = Map<String, dynamic>.from(
-      (await _rpc.call('persiantrend.network-state')) as Map,
+      (await _rpc.call('farvahartrends.network-state')) as Map,
     );
     final status = await _rpc.call(PearMethod.dhtStatus);
     if (status is Map) {
@@ -352,13 +354,13 @@ class Pear {
     return network;
   }
 
-  /// Call only after PersianTrend's pinned TLS admission has succeeded.
+  /// Call only after FarvaharTrends's pinned TLS admission has succeeded.
   Future<void> rememberConnection(
     PearKey peer,
     PearKey topic, {
     Map<String, dynamic>? node,
   }) async {
-    await _rpc.call('persiantrend.remember-peer', {
+    await _rpc.call('farvahartrends.remember-peer', {
       'peer': peer.hex,
       'topic': topic.hex,
       if (node != null) 'node': node,
@@ -366,10 +368,20 @@ class Pear {
   }
 
   Future<void> disconnect(PearKey peer, {bool cooldown = false}) async {
-    await _rpc.call('persiantrend.disconnect', {
+    await _rpc.call('farvahartrends.disconnect', {
       'peer': peer.hex,
       'cooldown': cooldown,
     });
+  }
+
+  /// Signed contact hints admitted by the application. The worklet probes
+  /// candidates with separate bounds before admitting them to its route cache.
+  Future<void> offerDiscoveryCandidates(
+    List<Map<String, dynamic>> nodes,
+  ) async {
+    if (nodes.length > 4)
+      throw ArgumentError('At most four candidates per call.');
+    await _rpc.call('farvahartrends.discovery-candidates', {'nodes': nodes});
   }
 
   /// The Corestore-backed store for append-only [PearCore] logs (E5.2).

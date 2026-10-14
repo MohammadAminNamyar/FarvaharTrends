@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 import 'pc_bluetooth_transport.dart';
 
@@ -23,7 +23,7 @@ Future<void> main(List<String> arguments) async {
   }
   if (options.help) {
     stdout.writeln(
-      'PersianTrend optional local test peer\n'
+      'FarvaharTrends optional local test peer\n'
       '  --host <this-PC-IPv4> [--port 45871] [--prepare-only]\n'
       '  --host <this-PC-IPv4> [--run-for <seconds>]\n'
       '  --host <this-PC-IPv4> --bluetooth-python <absolute-python.exe>\n'
@@ -100,7 +100,7 @@ Future<void> main(List<String> arguments) async {
       await pending.rename(identityFile.path);
     }
     final card = PeerCard(
-      name: 'PersianTrend local test peer',
+      name: 'FarvaharTrends local test peer',
       host: options.host!,
       port: options.port,
       certificatePem: identity.certPem,

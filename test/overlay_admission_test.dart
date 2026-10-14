@@ -3,11 +3,11 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/delivery_mode.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/loopback_preface.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/delivery_mode.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/loopback_preface.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 void main() {
   late Identity a, b, c;
@@ -152,44 +152,38 @@ void main() {
       expect(peer['routeId'], 'overlay-legitimate');
     },
   );
-  test(
-    'Wrong, partial or foreign loopback prefaces are dropped and the legitimate bridge still connects',
-    () async {
-      final engine = await receiver();
-      final admission = await admit(engine, a, 'overlay-preface');
-      final other = await admit(engine, c, 'overlay-preface-other');
-      // A hostile local app racing the bridge: wrong token, then a partial
-      // token followed by EOF, then another route's valid token.
-      final wrong = Uint8List.fromList(
-        admission.ingressPreface!.map((value) => value ^ 0x55).toList(),
-      );
-      await expectLater(
-        connect(a, admission, preface: wrong),
-        throwsA(anything),
-      );
-      final partial = await Socket.connect(
-        InternetAddress.loopbackIPv4,
-        admission.ingressPort!,
-      );
-      clients.add(partial);
-      partial.add(admission.ingressPreface!.sublist(0, 12));
-      await partial.flush();
-      await partial.close();
-      await expectLater(
-        connect(a, admission, preface: other.ingressPreface),
-        throwsA(anything),
-      );
-      await until(() async => (await engine.snapshot())['rejectedCount'] >= 3);
-      expect((await engine.snapshot())['connectedCount'], 0);
-      // The listener survives every wrong caller for the legitimate bridge.
-      await connect(a, admission);
-      await until(() async => (await engine.snapshot())['connectedCount'] == 1);
-      final peer = ((await engine.snapshot())['peers'] as List).singleWhere(
-        (peer) => peer['id'] == a.id,
-      );
-      expect(peer['routeId'], 'overlay-preface');
-    },
-  );
+  test('Wrong, partial or foreign loopback prefaces are dropped and the legitimate bridge still connects', () async {
+    final engine = await receiver();
+    final admission = await admit(engine, a, 'overlay-preface');
+    final other = await admit(engine, c, 'overlay-preface-other');
+    // A hostile local app racing the bridge: wrong token, then a partial
+    // token followed by EOF, then another route's valid token.
+    final wrong = Uint8List.fromList(
+      admission.ingressPreface!.map((value) => value ^ 0x55).toList(),
+    );
+    await expectLater(connect(a, admission, preface: wrong), throwsA(anything));
+    final partial = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      admission.ingressPort!,
+    );
+    clients.add(partial);
+    partial.add(admission.ingressPreface!.sublist(0, 12));
+    await partial.flush();
+    await partial.close();
+    await expectLater(
+      connect(a, admission, preface: other.ingressPreface),
+      throwsA(anything),
+    );
+    await until(() async => (await engine.snapshot())['rejectedCount'] >= 3);
+    expect((await engine.snapshot())['connectedCount'], 0);
+    // The listener survives every wrong caller for the legitimate bridge.
+    await connect(a, admission);
+    await until(() async => (await engine.snapshot())['connectedCount'] == 1);
+    final peer = ((await engine.snapshot())['peers'] as List).singleWhere(
+      (peer) => peer['id'] == a.id,
+    );
+    expect(peer['routeId'], 'overlay-preface');
+  });
   test('Loopback prefaces stay out of snapshots and reports', () async {
     final engine = await receiver();
     final admission = await admit(engine, a, 'overlay-secret');

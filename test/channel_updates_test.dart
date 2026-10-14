@@ -4,16 +4,16 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/channel_control.dart';
-import 'package:persian_trend/core/channel_key_store.dart';
-import 'package:persian_trend/core/channel_recovery.dart';
-import 'package:persian_trend/core/channels.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/media_store.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_engine.dart';
-import 'package:persian_trend/core/pilot_store.dart';
-import 'package:persian_trend/core/reader_state.dart';
+import 'package:farvahar_trends/core/channel_control.dart';
+import 'package:farvahar_trends/core/channel_key_store.dart';
+import 'package:farvahar_trends/core/channel_recovery.dart';
+import 'package:farvahar_trends/core/channels.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/media_store.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
+import 'package:farvahar_trends/core/pilot_store.dart';
+import 'package:farvahar_trends/core/reader_state.dart';
 
 void main() {
   late Identity owner, editor, other;

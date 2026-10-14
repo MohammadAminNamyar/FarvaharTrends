@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
-import 'package:persian_trend/core/service_lifecycle.dart';
+import 'package:farvahar_trends/core/service_lifecycle.dart';
 
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 

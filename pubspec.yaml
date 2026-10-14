@@ -1,7 +1,7 @@
-name: persian_trend
-description: "PersianTrend — a signed bulletin delivery pilot with no required central server."
+name: farvahar_trends
+description: "FarvaharTrends — a signed bulletin delivery pilot with no required central server."
 publish_to: 'none'
-version: 0.8.4+15
+version: 0.8.7+18
 
 environment:
   sdk: ^3.13.4
@@ -40,7 +40,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/bootstrap.json
-    - assets/brand/logo.jpg
+    - assets/brand/farvahar-mark.png
     - assets/fonts/OFL.txt
     - assets/fonts/Vazirmatn-OFL.txt
   fonts:
@@ -54,6 +54,9 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/brand/logo.jpg
+  image_path: assets/brand/farvahar-mark.png
   min_sdk_android: 29
   remove_alpha_ios: true
+  background_color_ios: "#102E42"
+  adaptive_icon_background: "#102E42"
+  adaptive_icon_foreground: android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png

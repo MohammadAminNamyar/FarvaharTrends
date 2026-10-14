@@ -75,7 +75,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
     if (file == null) throw StateError('Backup unavailable');
     final saved = await PilotPlatform.saveChannelDocument(
       file,
-      'PersianTrend-recovery.json',
+      'FarvaharTrends-recovery.json',
     );
     if (mounted) {
       setState(
@@ -121,7 +121,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
     if (file == null) throw StateError('Request unavailable');
     final saved = await PilotPlatform.saveChannelDocument(
       file,
-      'PersianTrend-editor-request.json',
+      'FarvaharTrends-editor-request.json',
     );
     if (mounted) {
       setState(
@@ -188,7 +188,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
     if (invitation == null) throw StateError('Invitation unavailable');
     final saved = await PilotPlatform.saveChannelDocument(
       invitation,
-      'PersianTrend-editor-invitation.json',
+      'FarvaharTrends-editor-invitation.json',
     );
     if (mounted) {
       setState(
@@ -294,7 +294,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
     margin: const EdgeInsets.only(bottom: 12),
     child: ListTile(
       contentPadding: const EdgeInsets.all(16),
-      leading: Icon(icon, color: const Color(0xFF267E7B)),
+      leading: Icon(icon, color: const Color(0xFF16736F)),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 6),
@@ -314,7 +314,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
       return Directionality(
         textDirection: fa ? TextDirection.rtl : TextDirection.ltr,
         child: Scaffold(
-          backgroundColor: const Color(0xFFF4F7F8),
+          backgroundColor: const Color(0xFFF7F6F2),
           appBar: AppBar(
             title: Text(
               widget.channelId == null
@@ -424,7 +424,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
                 ),
                 style: const TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF5A717C),
+                  color: Color(0xFF566B74),
                   height: 1.8,
                 ),
               ),
@@ -674,8 +674,8 @@ class ReaderSettingsCard extends StatelessWidget with Localized {
               ),
               subtitle: Text(
                 t(
-                  'سرویس دریافت با اعلان قابل مشاهده، پس از راه‌اندازی مجدد گوشی یا بسته شدن توسط سیستم دوباره شروع می‌شود.',
-                  'The visible receiving service starts again after a phone reboot or an OS kill.',
+                  'برنامه تلاش می‌کند سرویس دریافت با اعلان قابل مشاهده را پس از راه‌اندازی مجدد گوشی یا بسته شدن توسط سیستم دوباره فعال کند.',
+                  'The app tries to restart its visible receiving service after a phone reboot or an OS kill.',
                 ),
               ),
               value: app.restartAfterReboot,
@@ -716,11 +716,49 @@ class ReaderSettingsCard extends StatelessWidget with Localized {
             ),
             Text(
               t(
-                'خاموش کردن، حضور این دستگاه را از فهرست عمومی کشف حذف می‌کند و دریافت را دوباره راه‌اندازی می‌کند. نشانی شما همچنان برای گوشی‌هایی که به آن‌ها وصل می‌شوید دیده می‌شود. این گزینه ناشناسی ایجاد نمی‌کند.',
-                'Turning this off removes this device from the public discovery list and restarts receiving. Your address stays visible to the phones you connect to. This is not anonymity.',
+                'با خاموش کردن، اعلام حضور متوقف و کشف اینترنتی دوباره راه‌اندازی می‌شود. دریافت از دستگاه‌های نزدیک ادامه دارد. همتاهای متصل همچنان نشانی شما را می‌بینند.',
+                'Turning this off stops announcing this device and restarts Internet discovery. Nearby receiving continues. Connected peers still see your address.',
               ),
               key: const ValueKey('internet-announce-explanation'),
               style: const TextStyle(fontSize: 11, height: 1.7),
+            ),
+            const Divider(height: 28),
+            SwitchListTile.adaptive(
+              key: const ValueKey('public-discovery'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                t(
+                  'استفاده از سرویس‌های کشف عمومی',
+                  'Use public discovery services',
+                ),
+              ),
+              subtitle: Text(
+                t(
+                  'خاموش: کشف با همتاهای ذخیره‌شده و معرفی‌شده ادامه می‌یابد. این گزینه مسیرها را به داخل یک کشور محدود نمی‌کند.',
+                  'Off: use saved and shared peers. This does not restrict connections to one country.',
+                ),
+              ),
+              value: app.publicDiscovery,
+              onChanged: app.busy
+                  ? null
+                  : (value) => app.perform(() => app.setPublicDiscovery(value)),
+            ),
+            SwitchListTile.adaptive(
+              key: const ValueKey('discovery-helper'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                t('کمک به اتصال دوبارهٔ دیگران', 'Help other phones reconnect'),
+              ),
+              subtitle: Text(
+                t(
+                  'با روشن بودن اعلام حضور و در صورت دسترس‌پذیری، این گوشی به کشف همتاها کمک می‌کند و نشانی اتصال آن به اشتراک گذاشته می‌شود. دریافت و انتقال خبر به این گزینه وابسته نیست.',
+                  'When announcing and reachable, this phone helps discovery and shares its connection address. Receiving and forwarding news also work with this off.',
+                ),
+              ),
+              value: app.discoveryHelper,
+              onChanged: app.busy
+                  ? null
+                  : (value) => app.perform(() => app.setDiscoveryHelper(value)),
             ),
             const Divider(height: 28),
             Text(

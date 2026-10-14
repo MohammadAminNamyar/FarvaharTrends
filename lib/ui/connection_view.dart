@@ -123,7 +123,7 @@ class ConnectionView with Localized {
                       ),
                     ),
                   ),
-                  const AppTag('PILOT', color: pinkColor),
+                  const AppTag('PILOT', color: goldColor, onDark: true),
                 ],
               ),
               LiveRadar(
@@ -177,7 +177,7 @@ class ConnectionView with Localized {
               value: n(snapshot.channels.length),
               label: t('کانال ذخیره‌شده', 'SAVED CHANNELS'),
               icon: Icons.grid_view_rounded,
-              color: pinkColor,
+              color: goldColor,
             ),
           ),
         ],

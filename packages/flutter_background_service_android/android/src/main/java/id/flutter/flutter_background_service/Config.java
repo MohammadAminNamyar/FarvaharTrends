@@ -15,9 +15,9 @@ public class Config {
     }
 
     public void setAutoStartOnBoot(boolean value) {
-        pref.edit()
-                .putBoolean("auto_start_on_boot", value)
-                .apply();
+        if (!pref.edit().putBoolean("auto_start_on_boot", value).commit()) {
+            throw new IllegalStateException("Could not persist receiving restart policy");
+        }
     }
 
     public boolean isForeground() {
@@ -31,11 +31,13 @@ public class Config {
     }
 
     public boolean isManuallyStopped() {
-        return pref.getBoolean("is_manually_stopped", false);
+        return pref.getBoolean("is_manually_stopped", true);
     }
 
     public void setManuallyStopped(boolean value) {
-        pref.edit().putBoolean("is_manually_stopped", value).apply();
+        if (!pref.edit().putBoolean("is_manually_stopped", value).commit()) {
+            throw new IllegalStateException("Could not persist receiving session state");
+        }
     }
 
     public long getBackgroundHandle() {

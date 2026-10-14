@@ -10,7 +10,7 @@ import 'package:flutter_background_service_platform_interface/flutter_background
 bool _isMainIsolate = true;
 
 // The upstream API is void, so callers cannot await messenger teardown errors.
-// PersianTrend commands use request IDs/acknowledgments and explicit timeouts;
+// FarvaharTrends commands use request IDs/acknowledgments and explicit timeouts;
 // a destroyed messenger must not produce an uncaught isolate exception instead.
 void _sendData(
     MethodChannel channel, String method, Map<String, dynamic>? args) {

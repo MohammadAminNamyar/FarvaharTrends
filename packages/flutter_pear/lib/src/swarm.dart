@@ -91,11 +91,13 @@ class PearConnection {
   /// otherwise reach the peer's NEW connection once it reconnects).
   Future<void> write(Uint8List bytes) {
     if (_closed) {
-      return Future.error(pearExceptionFor(
-        'cannot write: this PearConnection has already closed (the peer '
-        'may have reconnected as a new PearConnection instead)',
-        code: PearErrorCode.connectionClosed,
-      ));
+      return Future.error(
+        pearExceptionFor(
+          'cannot write: this PearConnection has already closed (the peer '
+          'may have reconnected as a new PearConnection instead)',
+          code: PearErrorCode.connectionClosed,
+        ),
+      );
     }
     return _rpc.call(PearMethod.connectionWrite, {
       'peer': remotePublicKey.hex,
@@ -143,8 +145,10 @@ class PearSwarm {
   Timer? _joinTimer;
   bool _everConnected = false;
   bool _firstConnectionsListenerAttached = false;
-  PearSwarmStatus _currentState =
-      (state: PearSwarmState.discovering, error: null);
+  PearSwarmStatus _currentState = (
+    state: PearSwarmState.discovering,
+    error: null,
+  );
 
   /// New peer connections discovered on this topic — including a fresh
   /// [PearConnection] for a peer reconnecting after a drop (E6.5, see
@@ -169,19 +173,19 @@ class PearSwarm {
   /// shouldn't see [establishedConnections] delivered to it twice, e.g. via
   /// a re-triggered `conn.data.listen(...)` double-registration).
   Stream<PearConnection> get connections => Stream.multi((controller) {
-        if (!_firstConnectionsListenerAttached) {
-          _firstConnectionsListenerAttached = true;
-          for (final conn in _established) {
-            controller.add(conn);
-          }
-        }
-        final sub = _connections.stream.listen(
-          controller.add,
-          onError: controller.addError,
-          onDone: controller.close,
-        );
-        controller.onCancel = sub.cancel;
-      });
+    if (!_firstConnectionsListenerAttached) {
+      _firstConnectionsListenerAttached = true;
+      for (final conn in _established) {
+        controller.add(conn);
+      }
+    }
+    final sub = _connections.stream.listen(
+      controller.add,
+      onError: controller.addError,
+      onDone: controller.close,
+    );
+    controller.onCancel = sub.cancel;
+  });
 
   /// Every connection seen so far, in arrival order — this class's
   /// synchronous-snapshot equivalent of [currentState], but for
@@ -266,6 +270,7 @@ class PearSwarm {
     bool acceptUnannounced = false,
     List<String> dhtBootstrap = const [],
     bool dhtEphemeral = true,
+    bool publicBootstrap = true,
   }) async {
     final swarm = PearSwarm._(rpc, topic);
     swarm._wire();
@@ -277,6 +282,7 @@ class PearSwarm {
       if (acceptUnannounced) 'acceptUnannounced': true,
       if (dhtBootstrap.isNotEmpty) 'bootstrap': List<String>.of(dhtBootstrap),
       'ephemeral': dhtEphemeral,
+      'publicBootstrap': publicBootstrap,
     });
     return swarm;
   }

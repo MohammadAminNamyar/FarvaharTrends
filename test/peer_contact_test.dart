@@ -1,9 +1,10 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/peer_contact.dart';
-import 'package:persian_trend/core/peer_contact_store.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/peer_contact.dart';
+import 'package:farvahar_trends/core/peer_contact_store.dart';
 
 void main() {
   late Identity connection;
@@ -178,4 +179,26 @@ void main() {
       expect(await store.load(), isEmpty);
     },
   );
+
+  test('interrupted first write recovers a signed cache but never overrides a committed clear', () async {
+    final root = Directory('${Directory.current.path}/.tooling/test-tmp');
+    await root.create(recursive: true);
+    final dir = await root.createTemp('contact-crash-');
+    addTearDown(() => dir.delete(recursive: true));
+    final pending = File('${dir.path}/helper-contacts.json.next');
+    final encoded = jsonEncode({
+      'version': 1,
+      'contacts': [contact().toJson()],
+    });
+    await pending.writeAsString(encoded);
+    final store = PeerContactStore(dir);
+    expect((await store.loadForReconnect()).single.id, connection.id);
+    await store.save([]);
+    await pending.writeAsString(encoded);
+    expect(await store.loadForReconnect(), isEmpty);
+    await File('${dir.path}/helper-contacts.json').writeAsString('{partial');
+    expect((await store.loadForReconnect()).single.id, connection.id);
+    await pending.writeAsString('{partial');
+    expect(await store.loadForReconnect(), isEmpty);
+  });
 }

@@ -1,7 +1,7 @@
 'use strict'
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { DiscoveryRefresh } = require('../packages/flutter_pear/pear-end/persiantrend-discovery')
+const { DiscoveryRefresh } = require('../packages/flutter_pear/pear-end/farvahartrends-discovery')
 test('production Dart API does not promise an unsupported owner-relay RPC', () => {
   const fs = require('node:fs')
   const path = require('node:path')

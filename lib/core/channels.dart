@@ -8,7 +8,7 @@ import 'identity.dart';
 
 const int maxChannelNameLength = 80;
 const int maxChannelDescriptionLength = 500;
-const String channelSigningDomain = 'persiantrend/channel/v1';
+const String channelSigningDomain = 'farvahartrends/channel/v1';
 // Dart DateTime supports at most 100,000,000 days from the Unix epoch.
 // Wider JSON-safe integers are valid sequences, but invalid display timestamps.
 const int maxSignedWallTimeMs = 8640000000000000;

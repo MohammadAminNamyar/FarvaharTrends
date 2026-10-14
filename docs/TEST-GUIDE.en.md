@@ -1,11 +1,11 @@
-# Try PersianTrend with a friend
+# Try FarvaharTrends with a friend
 
 Use two consenting Android testers and harmless, invented news. See whether a **new** message reaches the other phone, then tell the organizer what happened. You do not need a results dashboard or an exported report.
 
 ## Install and open
 
 1. Install the same current test APK on both phones. **Android 10 (API 29) or newer** is required. If Android asks, allow **Install unknown apps** for the particular browser or file app opening the APK. You can disable that installation permission afterward.
-2. Open PersianTrend. Persian is the default; **EN** switches to English and **فارسی** switches back. The main tabs are **Connection**, **Channels**, and **News**.
+2. Open FarvaharTrends. Persian is the default; **EN** switches to English and **فارسی** switches back. The main tabs are **Connection**, **Channels**, and **News**.
 3. Receiving starts automatically on Android, using a visible foreground service. For radio tests, **Enable nearby connections** requests the relevant permissions and can show Android's Bluetooth-enable prompt. Older Android may also require location permission/settings for discovery; the app does not read GPS. Denied radio permission need not prevent a working IP/Wi-Fi connection.
 
 ## First try the same Wi-Fi
@@ -50,7 +50,7 @@ Optional instrumented developer trials are separate from verbal feedback; see [p
 
 ## Version 0.6.0: connection choices
 
-New installations default to **All networks**. Existing saved mode choices are preserved. **Nearby only** restricts PersianTrend to Bluetooth and devices on the same local Wi-Fi; mobile data may stay enabled for other apps. It disables public discovery, remote reconnect contacts, router port leases and Wi-Fi Direct. Direct peers see connection addresses. Android 10 or newer is required.
+New installations default to **All networks**. Existing saved mode choices are preserved. **Nearby only** restricts FarvaharTrends to Bluetooth and devices on the same local Wi-Fi; mobile data may stay enabled for other apps. It disables public discovery, remote reconnect contacts, router port leases and Wi-Fi Direct. Direct peers see connection addresses. Android 10 or newer is required.
 
 Channel signing and connections now use separate persisted keys. Updating keeps existing channels and private preferences. Historical key linkage cannot be undone. Ordinary channel news has no automatic read/delivery receipts, and follow/trust choices stay local. Reading or forwarding does not establish original authorship. News from outside Iran does not itself protect readers' identities. The Connection screen has a short explanation and expandable Privacy details. No Tor is bundled.
 

@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'ui/pilot_app.dart';
 
-export 'ui/pilot_app.dart' show PersianTrendApp;
+export 'ui/pilot_app.dart' show FarvaharTrendsApp;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,5 +16,5 @@ void main() {
       'Vazirmatn',
     ], await rootBundle.loadString('assets/fonts/Vazirmatn-OFL.txt'));
   });
-  runApp(const PersianTrendApp());
+  runApp(const FarvaharTrendsApp());
 }

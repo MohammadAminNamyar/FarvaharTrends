@@ -35,7 +35,7 @@ class LegacyText extends StatelessWidget {
 String diagnostic(BuildContext context, String text) =>
     LanguageScope.isFarsi(context) ? (diagnosticFa[text] ?? text) : text;
 const diagnosticFa = <String, String>{
-  'PersianTrend': 'پرشین‌ترند',
+  'FarvaharTrends': 'فروهر ترندز',
   'INDEPENDENT BY DESIGN': 'خبر، از مردم به مردم',
   'PILOT': 'آزمایشی',
   'Overview': 'دستگاه',

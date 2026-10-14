@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
 
 void main() {
   late Identity local;

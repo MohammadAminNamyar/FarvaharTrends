@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 class PilotPlatform {
-  static const _channel = MethodChannel('persiantrend/device');
+  static const _channel = MethodChannel('farvahartrends/device');
   static final _transportEvents =
       StreamController<Map<String, dynamic>>.broadcast();
   static bool _listening = false;

@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:basic_utils/basic_utils.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
+import 'package:farvahar_trends/core/identity.dart';
 import 'package:pointycastle/asn1.dart';
 
 void main() {
@@ -108,6 +108,9 @@ void main() {
               .first,
           'CLOCK_SKEW_ACCEPTED',
         );
+        // Finish the client side before waiting for the JVM to exit. Otherwise
+        // JSSE may wait for our TLS close while we wait for its process exit.
+        await socket.close();
         expect(
           await process.exitCode.timeout(const Duration(seconds: 10)),
           0,

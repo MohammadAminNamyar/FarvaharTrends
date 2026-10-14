@@ -71,7 +71,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Image.asset(
-                      'assets/brand/logo.jpg',
+                      'assets/brand/farvahar-mark.png',
                       width: 44,
                       height: 44,
                       fit: BoxFit.cover,
@@ -83,7 +83,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         LegacyText(
-                          'PersianTrend',
+                          'FarvaharTrends',
                           style: TextStyle(
                             fontSize: 19,
                             fontWeight: FontWeight.w800,
@@ -104,7 +104,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                       ],
                     ),
                   ),
-                  const AppTag('PILOT', color: pinkColor),
+                  const AppTag('PILOT', color: goldColor),
                   IconButton(
                     tooltip: 'Pilot guide',
                     onPressed: _guide,
@@ -441,7 +441,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
               value: '$confirmed',
               label: 'LOCKED + ≤ 5 MIN',
               icon: Icons.verified_outlined,
-              color: pinkColor,
+              color: errorColor,
             ),
           ),
         ],
@@ -514,7 +514,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
         child: const AppCard(
           child: Row(
             children: [
-              IconTile(Icons.science_outlined, color: pinkColor),
+              IconTile(Icons.science_outlined, color: goldColor),
               SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -940,7 +940,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   child: _resultMini(
                     '$unlocked',
                     'Timely · unlocked',
-                    pinkColor,
+                    errorColor,
                   ),
                 ),
                 Expanded(
@@ -1077,7 +1077,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.error_outline_rounded, color: pinkColor, size: 18),
+        const Icon(Icons.error_outline_rounded, color: errorColor, size: 18),
         const SizedBox(width: 10),
         Expanded(
           child: LegacyText(
@@ -1301,7 +1301,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   if (error != null)
                     LegacyText(
                       error!,
-                      style: const TextStyle(color: pinkColor, fontSize: 11),
+                      style: const TextStyle(color: errorColor, fontSize: 11),
                     ),
                 ],
               ),
@@ -1483,7 +1483,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                       padding: const EdgeInsets.only(top: 10),
                       child: LegacyText(
                         error!,
-                        style: const TextStyle(color: pinkColor, fontSize: 11),
+                        style: const TextStyle(color: errorColor, fontSize: 11),
                       ),
                     ),
                 ],
@@ -1557,7 +1557,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
           text: 'test-${DateTime.now().millisecondsSinceEpoch}',
         ),
         text = TextEditingController(
-          text: 'PersianTrend connection test. This is harmless public test content.',
+          text: 'FarvaharTrends connection test. This is harmless public test content.',
         );
     String? error;
     final message = await _inputDialog<(String, String)>(
@@ -1599,7 +1599,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                       fontSize: 10,
                       color:
                           utf8.encode(text.text).length > maxBulletinTextBytes
-                          ? pinkColor
+                          ? errorColor
                           : mutedColor,
                     ),
                   ),
@@ -1608,7 +1608,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                       padding: const EdgeInsets.only(top: 10),
                       child: LegacyText(
                         error!,
-                        style: const TextStyle(color: pinkColor, fontSize: 11),
+                        style: const TextStyle(color: errorColor, fontSize: 11),
                       ),
                     ),
                 ],
@@ -1693,7 +1693,7 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
           controller: scroll,
           padding: const EdgeInsets.fromLTRB(25, 8, 25, 28),
           children: [
-            const AppTag('THE FIRST REAL TRIAL', color: pinkColor),
+            const AppTag('THE FIRST REAL TRIAL', color: goldColor),
             const SizedBox(height: 17),
             const _PageIntro(
               'Start small.\nLearn from the signal.',
@@ -1909,7 +1909,7 @@ class _NetworkPainter extends CustomPainter {
         points[i],
         i == 2 ? 4 : 3,
         Paint()
-          ..color = (i == 2 ? pinkColor : tealColor).withValues(alpha: .75),
+          ..color = (i == 2 ? goldColor : tealColor).withValues(alpha: .75),
       );
     }
   }

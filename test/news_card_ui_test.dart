@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/ui/news_card.dart';
+import 'package:farvahar_trends/ui/news_card.dart';
 
 void main() {
   setUpAll(() async {
@@ -33,8 +33,8 @@ void main() {
         'receivedVia': 'overlay',
         'byline': fa ? 'الیاس' : 'Elias',
         'text': fa
-            ? 'اطلاعیهٔ تازه برای همراهان پرشین ترند\n\nخبرها را از کانال‌هایی که انتخاب کرده‌اید دنبال کنید. هر خبر با نام نویسنده و زمان دریافت روی همین گوشی نمایش داده می‌شود.'
-            : 'A fresh update for PersianTrend readers\n\nFollow the channels you choose. Each article shows its writer and the time it reached this phone.',
+            ? 'اطلاعیهٔ تازه برای همراهان فروهر ترندز\n\nخبرها را از کانال‌هایی که انتخاب کرده‌اید دنبال کنید. هر خبر با نام نویسنده و زمان دریافت روی همین گوشی نمایش داده می‌شود.'
+            : 'A fresh update for FarvaharTrends readers\n\nFollow the channels you choose. Each article shows its writer and the time it reached this phone.',
       };
       await tester.pumpWidget(
         MaterialApp(
@@ -57,7 +57,7 @@ void main() {
                       fa: fa,
                       channel: {
                         'id': 'a' * 64,
-                        'name': fa ? 'پرشین ترند' : 'PersianTrend',
+                        'name': fa ? 'فروهر ترندز' : 'FarvaharTrends',
                       },
                       assessment: fa ? 'مورد اعتماد شما' : 'Trusted by you',
                     ),

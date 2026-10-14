@@ -11,7 +11,7 @@ public final class PilotPlatformPlugin: NSObject, FlutterPlugin,
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
-      name: "persiantrend/device", binaryMessenger: registrar.messenger())
+      name: "farvahartrends/device", binaryMessenger: registrar.messenger())
     registrar.addMethodCallDelegate(PilotPlatformPlugin(), channel: channel)
   }
 
@@ -136,7 +136,7 @@ public final class PilotPlatformPlugin: NSObject, FlutterPlugin,
 
       let id = UUID()
       let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("PersianTrend-test-\(id.uuidString).json")
+        .appendingPathComponent("FarvaharTrends-test-\(id.uuidString).json")
       // Only the supplied report is written, in this application's temporary directory.
       try data.write(to: url, options: [.atomic, .completeFileProtection])
       pendingExport = result

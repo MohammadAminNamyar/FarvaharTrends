@@ -2,10 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
+
 import 'date_format.dart';
 
-const _ink = Color(0xFF183F51);
-const _muted = Color(0xFF5A717C);
+const _ink = inkColor;
+const _muted = mutedColor;
 
 /// Day-relative label for a signed send time in the channel/feed header.
 /// `now` is injectable for tests; it is the viewer's clock, never a measure.
@@ -84,7 +86,7 @@ class NewsImageView extends StatelessWidget {
               : Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(18),
-                  color: const Color(0xFFF0F5F5),
+                  color: const Color(0xFFECF5F3),
                   child: Row(
                     children: [
                       const Icon(Icons.image_outlined, color: _muted),

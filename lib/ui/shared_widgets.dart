@@ -27,9 +27,15 @@ class AppCard extends StatelessWidget {
 }
 
 class AppTag extends StatelessWidget {
-  const AppTag(this.text, {super.key, required this.color});
+  const AppTag(
+    this.text, {
+    super.key,
+    required this.color,
+    this.onDark = false,
+  });
   final String text;
   final Color color;
+  final bool onDark;
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -42,7 +48,13 @@ class AppTag extends StatelessWidget {
       style: TextStyle(
         fontSize: 7.5,
         fontWeight: FontWeight.w800,
-        color: color == tealColor ? tealTextColor : const Color(0xFFB40C65),
+        color: onDark
+            ? color
+            : color == tealColor
+            ? tealTextColor
+            : color == goldColor
+            ? goldTextColor
+            : errorColor,
         letterSpacing: .6,
       ),
     ),
@@ -163,12 +175,15 @@ class SubmissionError extends StatelessWidget {
           Text(
             farsi ? 'این کار کامل نشد' : 'That action did not finish',
             style: const TextStyle(
-              color: pinkColor,
+              color: errorColor,
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 6),
-          Text(message, style: const TextStyle(color: pinkColor, fontSize: 12)),
+          Text(
+            message,
+            style: const TextStyle(color: errorColor, fontSize: 12),
+          ),
         ],
       ),
     ),

@@ -30,7 +30,7 @@ recovery file immediately afterward. It contains that channel's ownership key,
 public permissions and the current publishing counter. Choose several random,
 unrelated words (at least 16 characters); save the file outside the phone and
 keep the password separately. Both are required. The password is not deliberately
-persisted or logged by PersianTrend. Passwords necessarily exist temporarily in
+persisted or logged by FarvaharTrends. Passwords necessarily exist temporarily in
 memory while processing, and Dart strings cannot be reliably erased from memory.
 Do not share the owner backup/password to invite a writer.
 

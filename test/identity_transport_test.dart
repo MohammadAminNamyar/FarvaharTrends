@@ -4,13 +4,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/delivery_mode.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/local_wifi_transport.dart';
-import 'package:persian_trend/core/loopback_preface.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/delivery_mode.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/local_wifi_transport.dart';
+import 'package:farvahar_trends/core/loopback_preface.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 void main() {
   late Identity connection, publisher, receiver;
@@ -391,27 +391,33 @@ class _WifiGate implements LocalWifiTransport {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     unawaited(
       LoopbackPreface.acceptOnce(
-        server,
-        token,
-        deadline: const Duration(seconds: 8),
-      ).then((flow) async {
-        final target = await Socket.connect(
-          InternetAddress.loopbackIPv4,
-          allowedPort!,
-        );
-        unawaited(
-          target.addStream(flow.data).catchError((Object _) {
-            target.destroy();
-          }),
-        );
-        unawaited(
-          flow.socket.addStream(target).catchError((Object _) {
-            flow.socket.destroy();
-          }),
-        );
-      }).catchError((Object _) {}),
+            server,
+            token,
+            deadline: const Duration(seconds: 8),
+          )
+          .then((flow) async {
+            final target = await Socket.connect(
+              InternetAddress.loopbackIPv4,
+              allowedPort!,
+            );
+            unawaited(
+              target.addStream(flow.data).catchError((Object _) {
+                target.destroy();
+              }),
+            );
+            unawaited(
+              flow.socket.addStream(target).catchError((Object _) {
+                flow.socket.destroy();
+              }),
+            );
+          })
+          .catchError((Object _) {}),
     );
-    return (host: InternetAddress.loopbackIPv4, port: server.port, preface: token);
+    return (
+      host: InternetAddress.loopbackIPv4,
+      port: server.port,
+      preface: token,
+    );
   }
 
   @override

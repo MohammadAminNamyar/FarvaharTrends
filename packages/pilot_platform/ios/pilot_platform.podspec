@@ -2,11 +2,11 @@
 Pod::Spec.new do |s|
   s.name             = 'pilot_platform'
   s.version          = '0.1.0'
-  s.summary          = 'Device observations and deliberate JSON export for the PersianTrend pilot.'
+  s.summary          = 'Device observations and deliberate JSON export for the FarvaharTrends pilot.'
   s.description      = 'Foreground iOS device observations and a user-controlled report share sheet.'
-  s.homepage         = 'https://example.invalid/persiantrend'
+  s.homepage         = 'https://example.invalid/farvahartrends'
   s.license          = { :type => 'Unspecified', :text => 'Internal prototype. No public distribution license has been declared.' }
-  s.author           = 'PersianTrend contributors'
+  s.author           = 'FarvaharTrends contributors'
   s.source           = { :path => '.' }
   s.source_files     = 'Classes/**/*.swift'
   s.dependency 'Flutter'

@@ -1,4 +1,4 @@
-param([string]$DeviceName = 'PersianTrend_Android16', [int]$Port = 5554, [string]$ApkPath)
+param([string]$DeviceName = 'FarvaharTrends_Android16', [int]$Port = 5554, [string]$ApkPath)
 . (Join-Path $PSScriptRoot 'android-env.ps1')
 $serial = 'emulator-' + $Port
 if (-not (Test-Path -LiteralPath $emulator)) { throw 'Android emulator is not installed in the project SDK.' }
@@ -27,6 +27,6 @@ $apk = if ([string]::IsNullOrWhiteSpace($ApkPath)) { Join-Path $projectRoot 'bui
 if (-not (Test-Path -LiteralPath $apk)) { throw 'Build the release APK before launching.' }
 & $adb -s $serial install -r $apk
 if ($LASTEXITCODE -ne 0) { throw 'APK installation failed.' }
-& $adb -s $serial shell am start -W -n org.persiantrend.persian_trend/.MainActivity
-if ($LASTEXITCODE -ne 0) { throw 'Could not launch PersianTrend.' }
-Write-Output 'PersianTrend is running. The emulator keeps its app data when closed.'
+& $adb -s $serial shell am start -W -n org.farvahartrends.farvahar_trends/.MainActivity
+if ($LASTEXITCODE -ne 0) { throw 'Could not launch FarvaharTrends.' }
+Write-Output 'FarvaharTrends is running. The emulator keeps its app data when closed.'

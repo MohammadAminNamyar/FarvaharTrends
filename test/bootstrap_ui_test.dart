@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/app_controller.dart';
-import 'package:persian_trend/core/bootstrap_config.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/main.dart';
-import 'package:persian_trend/ui/pilot_app.dart' show maxQrBytes;
+import 'package:farvahar_trends/app_controller.dart';
+import 'package:farvahar_trends/core/bootstrap_config.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/main.dart';
+import 'package:farvahar_trends/ui/pilot_app.dart' show maxQrBytes;
 import 'package:qr_flutter/qr_flutter.dart';
 
 void main() {
@@ -44,7 +44,11 @@ void main() {
       ..exported = export;
     addTearDown(app.dispose);
     await tester.pumpWidget(
-      PersianTrendApp(controller: app, initialize: false, animateRadar: false),
+      FarvaharTrendsApp(
+        controller: app,
+        initialize: false,
+        animateRadar: false,
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
@@ -86,7 +90,7 @@ void main() {
         for (var i = 1; i <= 4; i++)
           PeerCard(
             name: 'Helper $i',
-            host: '203.0.113.$i',
+            host: '11.0.113.$i',
             certificatePem: other.certPem,
           ).toJson(),
       ],
@@ -114,11 +118,11 @@ void main() {
       'peers': [
         PeerCard(
           name: 'Helper',
-          host: '203.0.113.1',
+          host: '11.0.113.1',
           certificatePem: other.certPem,
         ).toJson(),
       ],
-      'dhtBootstrap': ['203.0.113.2:49737'],
+      'dhtBootstrap': ['11.0.113.2:49737'],
     });
     await showPeers(tester, export: small);
     await tester.tap(find.byKey(const ValueKey('share-starting-peers')));
@@ -166,23 +170,23 @@ void main() {
       'peers': [
         PeerCard(
           name: 'Seed A',
-          host: '203.0.113.1',
+          host: '11.0.113.1',
           certificatePem: other.certPem,
         ).toJson(),
         PeerCard(
           name: 'Seed B',
-          host: '203.0.113.2',
+          host: '11.0.113.2',
           certificatePem: third.certPem,
         ).toJson(),
       ],
-      'dhtBootstrap': ['203.0.113.3:49737'],
+      'dhtBootstrap': ['11.0.113.3:49737'],
     });
     await importText(tester, document);
     expect(find.text('Trust 2 starting peers?'), findsOneWidget);
     expect(find.text('Seed A'), findsOneWidget);
     expect(find.text('Seed B'), findsOneWidget);
-    expect(find.text('Address: 203.0.113.1:$defaultPeerPort'), findsOneWidget);
-    expect(find.textContaining('203.0.113.3:49737'), findsOneWidget);
+    expect(find.text('Address: 11.0.113.1:$defaultPeerPort'), findsOneWidget);
+    expect(find.textContaining('11.0.113.3:49737'), findsOneWidget);
     expect(app.imports, isEmpty);
     await tester.tap(find.byKey(const ValueKey('approve-import')));
     await tester.pumpAndSettle();

@@ -13,10 +13,10 @@ if (![System.Net.IPAddress]::TryParse($HostIPv4, [ref]$address) -or
     throw 'This local-test script is limited to a PC IPv4 in 192.168.0.0/24.'
 }
 if (!(Test-Path -LiteralPath $program -PathType Leaf)) { throw 'Project-local Dart executable was not found.' }
-$group = 'PersianTrend local test peer'
+$group = 'FarvaharTrends local test peer'
 $rules = @(
-    @{ Name = 'PersianTrend.LocalTest.TCP.45871'; DisplayName = 'PersianTrend local test TCP45871'; Protocol = 'TCP'; LocalPort = 45871 },
-    @{ Name = 'PersianTrend.LocalTest.UDP.45872'; DisplayName = 'PersianTrend local test UDP45872'; Protocol = 'UDP'; LocalPort = 45872 }
+    @{ Name = 'FarvaharTrends.LocalTest.TCP.45871'; DisplayName = 'FarvaharTrends local test TCP45871'; Protocol = 'TCP'; LocalPort = 45871 },
+    @{ Name = 'FarvaharTrends.LocalTest.UDP.45872'; DisplayName = 'FarvaharTrends local test UDP45872'; Protocol = 'UDP'; LocalPort = 45872 }
 )
 if ($Action -eq 'Show') {
     $rules | ForEach-Object {
@@ -40,7 +40,7 @@ if ($Action -eq 'Remove') {
         if ($existing.Group -ne $group) { throw 'An existing rule belongs to another group; it was not changed.' }
         Remove-NetFirewallRule -Name $rule.Name
     }
-    Write-Output 'Removed only the two named PersianTrend local test rules, if present.'
+    Write-Output 'Removed only the two named FarvaharTrends local test rules, if present.'
     return
 }
 if ($Action -eq 'Update') {
@@ -49,7 +49,7 @@ if ($Action -eq 'Update') {
     foreach ($rule in $rules) {
         $existing = @(Get-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue)
         if ($existing.Count -ne 1 -or $existing[0].Group -ne $group) {
-            throw 'Both existing test rules must belong to the PersianTrend local test peer group. No rules were updated.'
+            throw 'Both existing test rules must belong to the FarvaharTrends local test peer group. No rules were updated.'
         }
     }
     foreach ($rule in $rules) {

@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/overlay_frames.dart';
+import 'package:farvahar_trends/core/overlay_frames.dart';
 
 void main() {
   test('many coalesced small records decode within a bounded time', () {
     final frame = OverlayFrame.encode(OverlayFrame.data, [42]);
-    final chunk = Uint8List.fromList([for (var i = 0; i < 30000; i++) ...frame]);
+    final chunk = Uint8List.fromList([
+      for (var i = 0; i < 30000; i++) ...frame,
+    ]);
     final clock = Stopwatch()..start();
     final frames = OverlayFrameDecoder().add(chunk);
     clock.stop();

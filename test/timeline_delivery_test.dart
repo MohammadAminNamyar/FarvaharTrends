@@ -4,13 +4,13 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/channel_control.dart';
-import 'package:persian_trend/core/channels.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/news_timeline.dart';
-import 'package:persian_trend/core/peer_engine.dart';
-import 'package:persian_trend/core/reader_state.dart';
+import 'package:farvahar_trends/core/channel_control.dart';
+import 'package:farvahar_trends/core/channels.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/news_timeline.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
+import 'package:farvahar_trends/core/reader_state.dart';
 
 void main() {
   test('TLS multi-writer catch-up, duplicate, restart and signed removal', () async {

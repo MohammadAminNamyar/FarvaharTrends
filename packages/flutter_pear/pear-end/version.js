@@ -1,2 +1,2 @@
 'use strict'
-module.exports = '92de6c4129abc528'
+module.exports = 'acf2915358745157'

@@ -303,7 +303,7 @@ abstract final class PearErrorCatalog {
           'digits.',
       cause: 'A typo, a missing group, or letters or non-ASCII digits in '
           'the key. Spaces and dashes are ignored; nothing else is.',
-      fix: 'This legacy command is not available in PersianTrend.',
+      fix: 'This legacy command is not available in FarvaharTrends.',
     ),
   };
 }

@@ -20,6 +20,8 @@ import 'models.dart';
 import 'peer_discovery.dart';
 import 'peer_contact.dart';
 import 'peer_contact_store.dart';
+import 'helper_contact_policy.dart';
+import 'discovery_contacts.dart';
 import 'peer_activity.dart';
 import 'peer_penalties.dart';
 import 'pilot_store.dart';
@@ -122,8 +124,42 @@ class PeerEngine {
   final bool allowLoopbackContactsForTesting;
   final PeerContactStore _contactStore;
   final Map<String, PeerContact> _helperContacts = {};
+  final HelperContactPolicy _helperPolicy = HelperContactPolicy();
   final Map<String, PeerContact> _reconnectContacts = {};
   PeerContact? _ownHelperContact;
+  late final DiscoveryContacts _discoveryContacts = DiscoveryContacts(
+    directory,
+  );
+  DiscoveryContact? _ownDiscoveryContact;
+
+  /// Private transport hints, consumed only by the local networking worklet.
+  List<DiscoveryContact> get discoveryContacts {
+    _discoveryContacts.expire();
+    return _discoveryContacts.contacts.values
+        .where((c) => !_blockedPeers.contains(c.id))
+        .toList();
+  }
+
+  Future<void> publishDiscoveryEndpoint(String? host, int? port) =>
+      _serial(() async {
+        if (host == null ||
+            port == null ||
+            nearbyOnly ||
+            !_running ||
+            !enablePeerReferrals) {
+          _ownDiscoveryContact = null;
+          return;
+        }
+        final old = _ownDiscoveryContact;
+        if (old != null &&
+            old.host == host &&
+            old.port == port &&
+            old.expiresAtMs - DateTime.now().millisecondsSinceEpoch > 60000) {
+          return;
+        }
+        _ownDiscoveryContact = DiscoveryContact.create(identity, host, port);
+        _announceHelperContacts();
+      });
   int _contactSignatureChecks = 0;
   int _contactHintsRejected = 0;
   final int discoveryPort;
@@ -759,9 +795,7 @@ class PeerEngine {
   }
 
   void _rememberCandidate(String id, String pem, DiscoverySessionHint hint) {
-    if (_peers.containsKey(id) ||
-        _blockedPeers.contains(id) ||
-        _cooling(id)) {
+    if (_peers.containsKey(id) || _blockedPeers.contains(id) || _cooling(id)) {
       return;
     }
     final now = _clock.elapsedMilliseconds;
@@ -1020,6 +1054,7 @@ class PeerEngine {
     _pendingBulletins.removeWhere((_, pending) => pending.peerId == id);
     _helperContacts.remove(id);
     _reconnectContacts.remove(id);
+    _helperPolicy.remove(id);
   }
 
   String? _oldestStaleAutomaticContact(int now) {
@@ -1329,6 +1364,13 @@ class PeerEngine {
 
   void _expireHelperContacts() {
     final now = DateTime.now().millisecondsSinceEpoch;
+    for (final id in _helperPolicy.expirePending(_clock.elapsedMilliseconds)) {
+      _helperContacts.remove(id);
+      _reconnectContacts.remove(id);
+      _endpoints[id]?.removeWhere(
+        (endpoint) => endpoint.routeId == 'helper-contact:$id',
+      );
+    }
     if ((_ownHelperContact?.expiresAtMs ?? now + 1) <= now) {
       _ownHelperContact = null;
     }
@@ -1351,6 +1393,7 @@ class PeerEngine {
       if (_reconnectContacts[id]!.expiresAtMs + PeerContact.maxReconnectAgeMs <=
           now) {
         _reconnectContacts.remove(id);
+        _helperPolicy.remove(id);
         _endpoints[id]?.removeWhere(
           (endpoint) => endpoint.routeId == 'helper-contact:$id',
         );
@@ -1389,7 +1432,10 @@ class PeerEngine {
     _expireHelperContacts();
     final own = _ownHelperContact;
     final candidates = _helperContacts.values
-        .where((contact) => contact.id != link.peerId)
+        .where(
+          (contact) =>
+              contact.id != link.peerId && _helperPolicy.isVerified(contact.id),
+        )
         .toList();
     final remaining = helperContactsPerFrame - (own == null ? 0 : 1);
     final start = candidates.isEmpty
@@ -1448,8 +1494,13 @@ class PeerEngine {
             _cooling(contact.id)) {
           continue;
         }
-        final previous = _helperContacts[contact.id];
+        final previous =
+            _helperContacts[contact.id] ?? _reconnectContacts[contact.id];
         if (previous != null && previous.issuedAtMs >= contact.issuedAtMs) {
+          continue;
+        }
+        if (!_helperPolicy.canAccept(contact, link.peerId)) {
+          _contactHintsRejected++;
           continue;
         }
         if (!await _admitIdentity(contact.peer)) continue;
@@ -1457,6 +1508,22 @@ class PeerEngine {
         _installHelperEndpoint(contact);
         _helperContacts[contact.id] = contact;
         _reconnectContacts.remove(contact.id);
+        _helperPolicy.record(contact, link.peerId, _clock.elapsedMilliseconds);
+        // A seed connection may already have proved this exact address.
+        final active = _links[contact.id];
+        if (active != null &&
+            !active.incoming &&
+            active.transport == PeerTransport.ip) {
+          for (final endpoint in _endpoints[contact.id] ?? <_Endpoint>[]) {
+            if (endpoint.key == active.endpointKey) {
+              _helperPolicy.confirm(
+                contact.id,
+                endpoint.host.address,
+                endpoint.port,
+              );
+            }
+          }
+        }
         changed = true;
       } on FormatException {
         _contactHintsRejected++;
@@ -1465,14 +1532,102 @@ class PeerEngine {
       }
     }
     if (changed && _running && generation == _generation) {
-      await _contactStore.save([
-        ..._helperContacts.values,
-        ..._reconnectContacts.values,
-      ]);
+      await _saveHelperContacts();
       if (_running && generation == _generation) {
         unawaited(_dialDue());
         _announceHelperContacts(except: link.peerId);
         _notify();
+      }
+    }
+  }
+
+  Future<void> _saveHelperContacts() async {
+    try {
+      await _contactStore.save([
+        ..._helperContacts.values.where((c) => _helperPolicy.isDurable(c.id)),
+        ..._reconnectContacts.values.where(
+          (c) => _helperPolicy.isDurable(c.id),
+        ),
+      ]);
+    } on FileSystemException {
+      // Storage failure is local, not peer abuse. Keep live delivery running.
+      _lastError = 'helper_contact_cache_unavailable';
+      _notify();
+    }
+  }
+
+  void _confirmHelperEndpoint(_Endpoint endpoint) {
+    if (endpoint.transport != PeerTransport.ip ||
+        !_helperPolicy.confirm(
+          endpoint.peerId,
+          endpoint.host.address,
+          endpoint.port,
+        )) {
+      return;
+    }
+    unawaited(
+      _serial(() async {
+        await _saveHelperContacts();
+        if (_running) _announceHelperContacts();
+      }),
+    );
+  }
+
+  List<Map<String, dynamic>> _discoveryContactsFor(_Link link) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final own = _ownDiscoveryContact;
+    final values = [
+      if (own != null && own.expiresAtMs > now) own,
+      ..._discoveryContacts.fresh.where(
+        (c) => c.id != link.peerId && !_blockedPeers.contains(c.id),
+      ),
+    ];
+    // Rotate a bounded page so a new neighbor can learn alternatives.
+    final offset = values.isEmpty
+        ? 0
+        : link.discoveryContactOffset % values.length;
+    final page = [
+      ...values.skip(offset),
+      ...values.take(offset),
+    ].take(4).toList();
+    link.discoveryContactOffset = values.isEmpty
+        ? 0
+        : (offset + page.length) % values.length;
+    return page.map((c) => c.value).toList();
+  }
+
+  Future<void> _receiveDiscoveryContacts(_Link link, dynamic raw) async {
+    if (raw == null) return;
+    final generation = _generation;
+    if (!_running || link.closed) return;
+    if (raw is! List || raw.length > 4) {
+      _contactHintsRejected++;
+      return;
+    }
+    var changed = false;
+    for (final entry in raw) {
+      final traffic = _traffic(link.peerId);
+      if (traffic.window.contactItems >= helperContactAttemptsPerPeer ||
+          _globalTraffic.contactItems >= helperContactAttemptsGlobal) {
+        break;
+      }
+      traffic.window.contactItems++;
+      _globalTraffic.contactItems++;
+      try {
+        if (entry is! Map<String, dynamic>) throw const FormatException();
+        final contact = DiscoveryContact.parse(entry);
+        if (contact.id == identity.id || _blockedPeers.contains(contact.id)) {
+          continue;
+        }
+        changed = _discoveryContacts.add(contact, link.peerId) || changed;
+      } on FormatException {
+        _contactHintsRejected++;
+      }
+    }
+    if (changed) {
+      await _discoveryContacts.save();
+      if (_running && generation == _generation && !link.closed) {
+        _announceHelperContacts(except: link.peerId);
       }
     }
   }
@@ -1483,6 +1638,8 @@ class PeerEngine {
     if (_running) await _stopImpl();
     _activeMode = activeMode;
     _lastError = null;
+    _ownDiscoveryContact = null;
+    await _discoveryContacts.load();
     if (enablePeerReferrals && !nearbyOnly) {
       for (final contact in await _contactStore.loadForReconnect()) {
         if (contact.id == identity.id || _blockedPeers.contains(contact.id)) {
@@ -1493,6 +1650,7 @@ class PeerEngine {
               contact.expiresAtMs <= DateTime.now().millisecondsSinceEpoch;
           (expired ? _reconnectContacts : _helperContacts)[contact.id] =
               contact;
+          _helperPolicy.restore(contact, _clock.elapsedMilliseconds);
           _installHelperEndpoint(contact, reconnect: expired);
         }
       }
@@ -1686,13 +1844,13 @@ class PeerEngine {
     _endpoints.remove(id);
     _nativeRoutes.removeWhere((_, route) => route.peerId == id);
     _blockedPeers.add(id);
+    _discoveryContacts.remove(id);
+    await _discoveryContacts.save();
     _helperContacts.remove(id);
     _reconnectContacts.remove(id);
+    _helperPolicy.remove(id);
     if (enablePeerReferrals && !nearbyOnly) {
-      await _contactStore.save([
-        ..._helperContacts.values,
-        ..._reconnectContacts.values,
-      ]);
+      await _saveHelperContacts();
     }
     await _savePeers();
     final link = _links[id];
@@ -2065,6 +2223,7 @@ class PeerEngine {
       }
       endpoint.failures = 0;
       endpoint.nextAttemptMs = 0;
+      _confirmHelperEndpoint(endpoint);
       _adopt(
         socket,
         peer,
@@ -2306,12 +2465,23 @@ class PeerEngine {
     switch (frame['type']) {
       case 'inventory':
         final wasModern = link.modern;
+        final supportedDiscovery = link.discoveryContactsSupported;
+        if (frame['features'] is List &&
+            (frame['features'] as List).length <= 8) {
+          link.discoveryContactsSupported = (frame['features'] as List)
+              .contains('discovery-v1');
+        }
         if (frame['features'] is List &&
             (frame['features'] as List).length <= 8 &&
             (frame['features'] as List).contains('channel-v2')) {
           link.modern = true;
         }
         if (link.modern && !wasModern) await _sendInventory(link);
+        if (!supportedDiscovery &&
+            link.discoveryContactsSupported &&
+            wasModern) {
+          await _sendDiscoveryContacts(link);
+        }
         final policyIds = _ids(frame['policies'] ?? <String>[], 32);
         final knownPolicies = _store.channelPolicies.values
             .map((v) => v['id'])
@@ -2369,6 +2539,12 @@ class PeerEngine {
             'receipts': missingReceipts.skip(i).take(16).toList(),
             'channels': missingChannels.skip(i).take(16).toList(),
           });
+        }
+      case 'discoveryContacts':
+        if (enablePeerReferrals &&
+            !nearbyOnly &&
+            link.discoveryContactsSupported) {
+          await _receiveDiscoveryContacts(link, frame['contacts']);
         }
       case 'want':
         final policyIds = _ids(frame['policies'] ?? <String>[], 16);
@@ -3135,7 +3311,7 @@ class PeerEngine {
         : (channelStart + channelPage.length) % channelIds.length;
     await _send(link, {
       'type': 'inventory',
-      'features': ['channel-v2'],
+      'features': ['channel-v2', 'discovery-v1'],
       if (link.modern)
         'policies': channelPage
             .map((id) => _store.channelPolicies[id]?['id'])
@@ -3157,6 +3333,19 @@ class PeerEngine {
       if (enablePeerReferrals && !nearbyOnly)
         'helperContacts': _contactsFor(link),
     });
+    await _sendDiscoveryContacts(link);
+  }
+
+  Future<void> _sendDiscoveryContacts(_Link link) async {
+    if (!enablePeerReferrals ||
+        nearbyOnly ||
+        !link.discoveryContactsSupported) {
+      return;
+    }
+    final values = _discoveryContactsFor(link);
+    if (values.isNotEmpty) {
+      await _send(link, {'type': 'discoveryContacts', 'contacts': values});
+    }
   }
 
   Future<void> _broadcast(Map<String, dynamic> frame, {String? except}) async {
@@ -3700,7 +3889,7 @@ class PeerEngine {
       'currentState': currentState,
       'receivedBulletins': receivedBulletins,
       'receipts': localReceipts,
-      'format': 'persiantrend-pilot-report-v1',
+      'format': 'farvahartrends-pilot-report-v1',
       'exportedAtWallMs': DateTime.now().millisecondsSinceEpoch,
       'participantId': short(identity.id),
       'running': _running,
@@ -3866,6 +4055,8 @@ class _Link {
   int receiptOffset = 0;
   int channelOffset = 0;
   int helperContactOffset = 0;
+  int discoveryContactOffset = 0;
+  bool discoveryContactsSupported = false;
   int lastReceivedMs = 0;
   int pendingFrames = 0;
   bool modern = false;

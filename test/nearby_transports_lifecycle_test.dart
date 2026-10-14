@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
-import 'package:persian_trend/nearby_transports.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
+import 'package:farvahar_trends/nearby_transports.dart';
 
 void main() {
   late Identity local, remote;

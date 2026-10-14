@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 typedef BluetoothProcessStarter = Future<Process> Function(
   String executable,

@@ -4,13 +4,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/channels.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/loopback_preface.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
-import 'package:persian_trend/core/pilot_store.dart';
+import 'package:farvahar_trends/core/channels.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/loopback_preface.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
+import 'package:farvahar_trends/core/pilot_store.dart';
 
 void main() {
   late Identity a, b, other;
@@ -99,6 +99,7 @@ void main() {
           Identity.certificateId(certificate.pem) == remote.id,
     ).timeout(const Duration(seconds: 3));
   }
+
   Future<void> frame(
     SecureSocket socket,
     String type,

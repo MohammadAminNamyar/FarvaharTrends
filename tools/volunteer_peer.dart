@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 /// Opt-in, bounded TCP relay. Only public-bootstrap.json may be shared.
 /// This CLI never creates channels or publishes news on an operator's behalf.
@@ -203,10 +203,14 @@ Future<void> main(List<String> arguments) async {
     );
     exitCode = 73;
   } on SocketException catch (_) {
-    stderr.writeln('Relay socket could not start. Check the port and firewall.');
+    stderr.writeln(
+      'Relay socket could not start. Check the port and firewall.',
+    );
     exitCode = 69;
   } catch (_) {
-    stderr.writeln('Relay failed; private state and network details were omitted.');
+    stderr.writeln(
+      'Relay failed; private state and network details were omitted.',
+    );
     exitCode = 1;
   } finally {
     heartbeat?.cancel();
@@ -218,13 +222,15 @@ Future<void> main(List<String> arguments) async {
       await engine?.stop();
       await lock?.close();
     } catch (_) {
-      stderr.writeln('Relay cleanup failed; check that its process has exited.');
+      stderr.writeln(
+        'Relay cleanup failed; check that its process has exited.',
+      );
       exitCode = 1;
     }
   }
 }
 
-const _help = '''PersianTrend small-group volunteer TCP relay
+const _help = '''FarvaharTrends small-group volunteer TCP relay
 First preparation:
   --advertise <numeric-IPv4> [--port 45871] [--advertise-port 45871]
   --accept-enrollment --prepare-only
@@ -334,11 +340,15 @@ class _Config {
 
   factory _Config.create(_Options options) {
     if (options.advertise == null) {
-      throw const FormatException('--advertise is required for new relay state.');
+      throw const FormatException(
+        '--advertise is required for new relay state.',
+      );
     }
-    final name = options.name ?? 'PersianTrend volunteer peer';
-    if (name.trim().isEmpty || name.length > 80 ||
-        utf8.encode(name).length > 256 || RegExp(r'[\x00-\x1f\x7f]').hasMatch(name)) {
+    final name = options.name ?? 'FarvaharTrends volunteer peer';
+    if (name.trim().isEmpty ||
+        name.length > 80 ||
+        utf8.encode(name).length > 256 ||
+        RegExp(r'[\x00-\x1f\x7f]').hasMatch(name)) {
       throw const FormatException('Relay name must be 1–80 plain characters.');
     }
     return _Config(
@@ -356,7 +366,8 @@ class _Config {
         json['listenPort'] is! int ||
         json['advertisePort'] is! int ||
         json['name'] is! String ||
-        json['acceptEnrollment'] is! bool || json.length != 6) {
+        json['acceptEnrollment'] is! bool ||
+        json.length != 6) {
       throw const FormatException('Stored operator configuration is invalid.');
     }
     return _Config.create(
@@ -381,7 +392,8 @@ class _Config {
   void requireMatchingOptions(_Options options) {
     if ((options.advertise != null && options.advertise != advertise) ||
         (options.port != null && options.port != listenPort) ||
-        (options.advertisePort != null && options.advertisePort != advertisePort) ||
+        (options.advertisePort != null &&
+            options.advertisePort != advertisePort) ||
         (options.name != null && options.name!.trim() != name) ||
         (options.acceptEnrollment && !acceptEnrollment)) {
       throw const FormatException(
@@ -400,7 +412,8 @@ Future<List<PeerCard>> _readSeeds(_Options options, String selfId) async {
       throw const FormatException('A relay seed needs a numeric endpoint.');
     }
     final existing = peers[card.id];
-    if (existing != null && jsonEncode(existing.toJson()) != jsonEncode(card.toJson())) {
+    if (existing != null &&
+        jsonEncode(existing.toJson()) != jsonEncode(card.toJson())) {
       throw const FormatException('Seed files contain conflicting peer cards.');
     }
     peers[card.id] = card;
@@ -414,7 +427,9 @@ Future<List<PeerCard>> _readSeeds(_Options options, String selfId) async {
   }
   for (final path in options.bootstrapFiles) {
     final value = await _readObject(File(path), 256 * 1024);
-    if (value['version'] != 1 || value['peers'] is! List || value.length != 2 ||
+    if (value['version'] != 1 ||
+        value['peers'] is! List ||
+        value.length != 2 ||
         (value['peers'] as List).length > PeerEngine.maxPeers) {
       throw const FormatException('Invalid bounded relay bootstrap.');
     }
@@ -432,9 +447,9 @@ Future<Map<String, dynamic>> _readObject(File file, int maximum) async {
   if (await file.length() > maximum) {
     throw const FormatException('Relay input file exceeds its size limit.');
   }
-  final bytes = await file.openRead(0, maximum + 1).fold<List<int>>(
-    <int>[], (result, chunk) => result..addAll(chunk),
-  );
+  final bytes = await file
+      .openRead(0, maximum + 1)
+      .fold<List<int>>(<int>[], (result, chunk) => result..addAll(chunk));
   if (bytes.length > maximum) {
     throw const FormatException('Relay input file exceeds its size limit.');
   }
@@ -450,10 +465,13 @@ Future<void> _writeNew(File file, Map<String, dynamic> value) async {
   await pending.create(exclusive: true);
   await _protect(pending.path);
   await pending.writeAsString(
-    const JsonEncoder.withIndent('  ').convert(value), flush: true,
+    const JsonEncoder.withIndent('  ').convert(value),
+    flush: true,
   );
   if (await file.exists()) {
-    throw const FormatException('Relay state changed; existing data was preserved.');
+    throw const FormatException(
+      'Relay state changed; existing data was preserved.',
+    );
   }
   await pending.rename(file.path);
 }
@@ -461,8 +479,13 @@ Future<void> _writeNew(File file, Map<String, dynamic> value) async {
 Future<void> _requireOrdinaryPath(String path, {bool directory = false}) async {
   final type = await FileSystemEntity.type(path, followLinks: false);
   if (type != FileSystemEntityType.notFound &&
-      type != (directory ? FileSystemEntityType.directory : FileSystemEntityType.file)) {
-    throw const FormatException('Relay state must use ordinary files/directories.');
+      type !=
+          (directory
+              ? FileSystemEntityType.directory
+              : FileSystemEntityType.file)) {
+    throw const FormatException(
+      'Relay state must use ordinary files/directories.',
+    );
   }
 }
 
@@ -470,12 +493,16 @@ Future<void> _protect(String path, {bool directory = false}) async {
   final ProcessResult result;
   if (Platform.isWindows) {
     // A constant script, with its path passed as data rather than shell code.
-    result = await Process.run('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      r'''
+    result = await Process.run(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        r'''
 $ErrorActionPreference = 'Stop'
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$kind = $env:PERSIANTREND_ACL_KIND
+$kind = $env:FARVAHARTRENDS_ACL_KIND
 if ($kind -eq 'directory') {
   $acl = [Security.AccessControl.DirectorySecurity]::new()
   $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
@@ -486,14 +513,20 @@ if ($kind -eq 'directory') {
 $acl.SetOwner($sid)
 $acl.SetAccessRuleProtection($true, $false)
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $env:PERSIANTREND_ACL_PATH -AclObject $acl
+Set-Acl -LiteralPath $env:FARVAHARTRENDS_ACL_PATH -AclObject $acl
 ''',
-    ], environment: {
-      'PERSIANTREND_ACL_PATH': path,
-      'PERSIANTREND_ACL_KIND': directory ? 'directory' : 'file',
-    });
+      ],
+      environment: {
+        'FARVAHARTRENDS_ACL_PATH': path,
+        'FARVAHARTRENDS_ACL_KIND': directory ? 'directory' : 'file',
+      },
+    );
   } else {
-    result = await Process.run('/bin/chmod', [directory ? '700' : '600', '--', path]);
+    result = await Process.run('/bin/chmod', [
+      directory ? '700' : '600',
+      '--',
+      path,
+    ]);
   }
   if (result.exitCode != 0) {
     throw const FormatException('Could not restrict relay state permissions.');
@@ -502,11 +535,16 @@ Set-Acl -LiteralPath $env:PERSIANTREND_ACL_PATH -AclObject $acl
 
 String _ipv4(String value) {
   final address = InternetAddress.tryParse(value);
-  if (address == null || address.type != InternetAddressType.IPv4 ||
-      address.isLoopback || address.isMulticast ||
-      address.rawAddress.first == 0 || address.rawAddress.first >= 240 ||
+  if (address == null ||
+      address.type != InternetAddressType.IPv4 ||
+      address.isLoopback ||
+      address.isMulticast ||
+      address.rawAddress.first == 0 ||
+      address.rawAddress.first >= 240 ||
       address.address == '255.255.255.255') {
-    throw const FormatException('Use an explicit numeric unicast advertised IPv4.');
+    throw const FormatException(
+      'Use an explicit numeric unicast advertised IPv4.',
+    );
   }
   return address.address;
 }
@@ -520,7 +558,10 @@ int _port(String value) {
 }
 
 String _normalized(String path) {
-  final value = File(path).absolute.uri.normalizePath().toFilePath().replaceAll('\\', '/');
+  final value = File(path).absolute.uri
+      .normalizePath()
+      .toFilePath()
+      .replaceAll('\\', '/');
   return Platform.isWindows ? value.toLowerCase() : value;
 }
 

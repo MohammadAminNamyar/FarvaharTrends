@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/app_controller.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/main.dart';
+import 'package:farvahar_trends/app_controller.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/main.dart';
 
 void main() {
   late Identity identity;
@@ -56,7 +56,7 @@ void main() {
           await tester.pumpWidget(
             RepaintBoundary(
               key: const ValueKey('log-preview'),
-              child: PersianTrendApp(
+              child: FarvaharTrendsApp(
                 controller: app,
                 initialize: false,
                 animateRadar: false,
@@ -66,7 +66,7 @@ void main() {
           await tester.pumpAndSettle();
           await tester.runAsync(
             () => precacheImage(
-              const AssetImage('assets/brand/logo.jpg'),
+              const AssetImage('assets/brand/farvahar-mark.png'),
               tester.element(find.byType(Scaffold)),
             ),
           );

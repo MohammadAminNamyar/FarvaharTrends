@@ -17,14 +17,23 @@ class PeerContactStore {
   Future<List<PeerContact>> loadForReconnect() => _load(true);
 
   Future<List<PeerContact>> _load(bool reconnect) async {
+    await _tail;
+    // A process may die after flushing the pending file but before renaming it.
+    // Prefer a valid committed file (including an intentionally empty cache).
+    return await _read(_file, reconnect) ??
+        await _read(File('${_file.path}.next'), reconnect) ??
+        [];
+  }
+
+  Future<List<PeerContact>?> _read(File file, bool reconnect) async {
     try {
-      if (!await _file.exists() || await _file.length() > maxBytes) return [];
-      final raw = jsonDecode(await _file.readAsString());
+      if (!await file.exists() || await file.length() > maxBytes) return null;
+      final raw = jsonDecode(await file.readAsString());
       if (raw is! Map ||
           raw['version'] != 1 ||
           raw['contacts'] is! List ||
           (raw['contacts'] as List).length > maxContacts) {
-        return [];
+        return null;
       }
       final result = <String, PeerContact>{};
       for (final item in raw['contacts'] as List) {
@@ -49,9 +58,9 @@ class PeerContactStore {
       }
       return result.values.toList();
     } on FileSystemException {
-      return [];
+      return null;
     } on FormatException {
-      return [];
+      return null;
     }
   }
 

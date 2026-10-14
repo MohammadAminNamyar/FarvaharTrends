@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/app_controller.dart';
-import 'package:persian_trend/ui/channel_views.dart';
-import 'package:persian_trend/ui/channel_tools.dart';
+import 'package:farvahar_trends/app_controller.dart';
+import 'package:farvahar_trends/ui/channel_views.dart';
+import 'package:farvahar_trends/ui/channel_tools.dart';
 
 class _Reader extends AppController {
   _Reader(String language) {

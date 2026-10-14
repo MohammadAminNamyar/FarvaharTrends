@@ -1,4 +1,4 @@
-# PersianTrend transport fork
+# FarvaharTrends transport fork
 
 Based on `flutter_pear` 0.4.9, MIT, Andrew Loable:
 https://github.com/andrewloable/flutter_pear
@@ -8,10 +8,10 @@ The source archive was verified against pub.dev SHA-256
 The native binding remains pinned to upstream `flutter_pear_bare` 0.4.9 and
 Bare Kit 2.5.5. Preserve LICENSE, NOTICE and THIRD_PARTY_LICENSES.
 
-PersianTrend bundles `pear-end/persiantrend.js`, a transport-only entry point.
+FarvaharTrends bundles `pear-end/farvahartrends.js`, a transport-only entry point.
 It exposes bounded Hyperswarm byte streams and private, bounded routing caches;
 the broader storage, drive, pairing and multi-writer RPCs are not implemented.
-Publisher verification and spam limits remain in PersianTrend's peer engine.
+Publisher verification and spam limits remain in FarvaharTrends's peer engine.
 
 The public discovery namespace is shared by app installations. Discovery is
 not anonymity, publisher trust or private group membership. No channel names,

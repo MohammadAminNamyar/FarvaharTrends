@@ -3,9 +3,9 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/channels.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
+import 'package:farvahar_trends/core/channels.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
 
 void main() {
   late Identity source;
@@ -163,7 +163,7 @@ void main() {
     test('rejects malformed and oversized pairing tokens', () {
       for (final token in [
         '',
-        'persiantrend:pair:v1:!',
+        'farvahartrends:pair:v1:!',
         'other:${sourceCard.toText()}',
         'x' * 17000,
       ]) {

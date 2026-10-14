@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "org.persiantrend.persian_trend"
+    namespace = "org.farvahartrends.farvahar_trends"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -24,8 +24,8 @@ android {
 
     defaultConfig {
         val e2e = project.findProperty("e2eApplicationId") == "true"
-        applicationId = if (e2e) "org.persiantrend.persian_trend.e2e" else "org.persiantrend.persian_trend"
-        manifestPlaceholders["appLabel"] = if (e2e) "PersianTrend Test" else "PersianTrend"
+        applicationId = if (e2e) "org.farvahartrends.farvahar_trends.e2e" else "org.farvahartrends.farvahar_trends"
+        manifestPlaceholders["appLabel"] = if (e2e) "FarvaharTrends Test" else "FarvaharTrends"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // The pinned Bare Kit network runtime requires Android 10 or newer.

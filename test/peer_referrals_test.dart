@@ -1,10 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/delivery_mode.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/delivery_mode.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
+import 'package:farvahar_trends/core/peer_contact_store.dart';
 
 void main() {
   final engines = <PeerEngine>[];
@@ -17,6 +18,7 @@ void main() {
     readerKey = Identity.generate();
     publisher = Identity.generate();
   });
+
   setUp(() async {
     final root = Directory('${Directory.current.path}/.tooling/test-tmp');
     await root.create(recursive: true);
@@ -70,6 +72,43 @@ void main() {
         port: (await helper.snapshot())['listenPort'] as int,
         lifetimeMs: lifetime,
       );
+
+  test('news and signed discovery introductions survive A leaving and B restarting before C joins', () async {
+    final a = create(first, 'carry-a', helper: true);
+    await a.start(activeMode: false);
+    await a.publishDiscoveryEndpoint('11.2.3.4', 49737);
+    final b = create(second, 'carry-b', helper: true, seeds: [await card(a)]);
+    await b.start(activeMode: false);
+    final channel = await a.createChannel(name: 'Offline forwarding');
+    await a.publishToChannel(
+      channelId: channel.id,
+      text: 'PT-OFFLINE-CARRY-001',
+    );
+    await until(
+      () async =>
+          b.discoveryContacts.isNotEmpty &&
+          ((await b.snapshot())['bulletins'] as List).any(
+            (v) => v['text'] == 'PT-OFFLINE-CARRY-001',
+          ),
+    );
+    await a.stop();
+    await b.stop();
+    final restarted = create(second, 'carry-b', helper: true);
+    await restarted.start(activeMode: false);
+    final c = create(readerKey, 'carry-c', seeds: [await card(restarted)]);
+    await c.start(activeMode: false);
+    await until(
+      () async =>
+          c.discoveryContacts.isNotEmpty &&
+          ((await c.snapshot())['bulletins'] as List).any(
+            (v) => v['text'] == 'PT-OFFLINE-CARRY-001',
+          ),
+    );
+    expect(c.discoveryContacts.single.id, first.id);
+    expect(c.discoveryContacts.single.endpoint, '11.2.3.4:49737');
+    expect((await a.snapshot())['running'], isFalse);
+    expect((await c.snapshot())['connectedCount'], 1);
+  });
 
   test('Peers learn an unconfigured helper and receive new news after losing their initial helper', () async {
     final b = create(second, 'b', helper: true);
@@ -153,6 +192,40 @@ void main() {
     );
   });
 
+  test(
+    'cache write failure preserves live authenticated news delivery',
+    () async {
+      final helper = create(second, 'disk-helper', helper: true);
+      await helper.start(activeMode: false);
+      await advertise(helper);
+      // Simulate a local filesystem failure without changing host permissions.
+      await Directory('${scratch.path}/disk-reader/helper-contacts.json.next')
+          .create(recursive: true);
+      final reader = create(
+        readerKey,
+        'disk-reader',
+        seeds: [await card(helper)],
+      );
+      await reader.start(activeMode: false);
+      await until(
+        () async =>
+            (await reader.snapshot())['lastError'] ==
+            'helper_contact_cache_unavailable',
+      );
+      final channel = await helper.createChannel(name: 'Storage failure');
+      await helper.publishToChannel(
+        channelId: channel.id,
+        text: 'Still receiving',
+      );
+      await until(
+        () async => ((await reader.snapshot())['bulletins'] as List).any(
+          (b) => b['text'] == 'Still receiving',
+        ),
+      );
+      expect((await reader.snapshot())['connectedCount'], 1);
+    },
+  );
+
   test('Only an enabled helper may publish a reachable endpoint', () async {
     final ordinary = create(readerKey, 'ordinary');
     await ordinary.start(activeMode: false);
@@ -170,6 +243,55 @@ void main() {
     await expectLater(advertise(nearby), throwsStateError);
     expect((await nearby.snapshot())['helperContactCount'], 0);
   });
+
+  test(
+    'a signed false address is not forwarded or persisted as a recovery route',
+    () async {
+      final liar = create(second, 'false-address', helper: true);
+      await liar.start(activeMode: false);
+      final a = create(
+        first,
+        'verifier',
+        helper: true,
+        seeds: [await card(liar)],
+      );
+      await a.start(activeMode: false);
+      await until(() async => (await a.snapshot())['connectedCount'] == 1);
+      // The claimed port belongs to a different TLS identity. An established
+      // connection to the signer at its real port must not validate this claim.
+      await liar.publishHelperEndpoint(
+        host: '127.0.0.1',
+        port: (await a.snapshot())['listenPort'] as int,
+        lifetimeMs: 120000,
+      );
+      await until(() async => (await a.snapshot())['helperContactCount'] == 1);
+      final reader = create(
+        readerKey,
+        'isolated-reader',
+        seeds: [await card(a)],
+      );
+      await reader.start(activeMode: false);
+      final channel = await a.createChannel(name: 'Referral rejection barrier');
+      await a.publishToChannel(
+        channelId: channel.id,
+        text: 'Inventory received',
+      );
+      await until(
+        () async => ((await reader.snapshot())['bulletins'] as List).any(
+          (b) => b['text'] == 'Inventory received',
+        ),
+      );
+      expect(peers(await reader.snapshot()), isNot(contains(second.id)));
+      expect((await reader.snapshot())['helperContactCount'], 0);
+      expect(
+        await PeerContactStore(
+          Directory('${scratch.path}/verifier'),
+          allowLoopbackForTesting: true,
+        ).loadForReconnect(),
+        isEmpty,
+      );
+    },
+  );
 }
 
 Set<String> peers(Map<String, dynamic> state) =>

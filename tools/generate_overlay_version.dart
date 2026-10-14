@@ -6,10 +6,12 @@ void main() {
   const directory = 'packages/flutter_pear';
   final bytes = <int>[];
   for (final name in [
-    'persiantrend.js',
-    'persiantrend-routing.js',
-    'persiantrend-discovery.js',
-    'persiantrend-cooldown.js',
+    'farvahartrends.js',
+    'farvahartrends-routing.js',
+    'farvahartrends-discovery.js',
+    'farvahartrends-cooldown.js',
+    'farvahartrends-reconnect.js',
+    'farvahartrends-candidates.js',
     'desktop-ipc.js',
     'package-lock.json',
   ]) {

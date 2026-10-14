@@ -33,7 +33,7 @@ class PeerContact {
     final random = Random.secure();
     final body = <String, dynamic>{
       'version': 1,
-      'kind': 'persiantrend/helper-contact/v1',
+      'kind': 'farvahartrends/helper-contact/v1',
       'certificatePem': connection.certPem,
       'host': host,
       'port': port,
@@ -85,7 +85,7 @@ class PeerContact {
     if (utf8.encode(jsonEncode(value)).length > maxBytes ||
         value.length != 9 ||
         value['version'] != 1 ||
-        value['kind'] != 'persiantrend/helper-contact/v1' ||
+        value['kind'] != 'farvahartrends/helper-contact/v1' ||
         value['certificatePem'] is! String ||
         value['host'] is! String ||
         value['port'] is! int ||
@@ -127,7 +127,7 @@ class PeerContact {
     }
     final body = <String, dynamic>{
       'version': 1,
-      'kind': 'persiantrend/helper-contact/v1',
+      'kind': 'farvahartrends/helper-contact/v1',
       'certificatePem': value['certificatePem'],
       'host': value['host'],
       'port': value['port'],

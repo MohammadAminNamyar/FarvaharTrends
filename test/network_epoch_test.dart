@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/network_epoch.dart';
+import 'package:farvahar_trends/core/network_epoch.dart';
 
 void main() {
   test(

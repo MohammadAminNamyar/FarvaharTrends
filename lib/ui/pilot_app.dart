@@ -1,4 +1,4 @@
-/// PersianTrend's app shell: `MaterialApp`, theme, locale and the reader.
+/// FarvaharTrends's app shell: `MaterialApp`, theme, locale and the reader.
 ///
 /// `main.dart` and the tests import this file; the screens live in their own
 /// modules (`reader_shell.dart`, `legacy_diagnostics.dart`, ...).
@@ -14,8 +14,8 @@ import 'theme.dart';
 
 export 'legacy_diagnostics.dart' show maxQrBytes;
 
-class PersianTrendApp extends StatefulWidget {
-  const PersianTrendApp({
+class FarvaharTrendsApp extends StatefulWidget {
+  const FarvaharTrendsApp({
     super.key,
     this.controller,
     this.initialize = true,
@@ -25,10 +25,10 @@ class PersianTrendApp extends StatefulWidget {
   final bool initialize;
   final bool animateRadar;
   @override
-  State<PersianTrendApp> createState() => _AppState();
+  State<FarvaharTrendsApp> createState() => _AppState();
 }
 
-class _AppState extends State<PersianTrendApp> {
+class _AppState extends State<FarvaharTrendsApp> {
   late final AppController app = widget.controller ?? AppController();
   @override
   void initState() {
@@ -46,7 +46,7 @@ class _AppState extends State<PersianTrendApp> {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: app,
     builder: (context, _) => MaterialApp(
-      title: 'PersianTrend',
+      title: 'FarvaharTrends',
       debugShowCheckedModeBanner: false,
       locale: Locale(app.languageCode),
       supportedLocales: const [Locale('fa'), Locale('en')],
@@ -67,9 +67,12 @@ class _AppState extends State<PersianTrendApp> {
         scaffoldBackgroundColor: canvasColor,
         colorScheme: ColorScheme.fromSeed(seedColor: inkColor).copyWith(
           primary: inkColor,
-          secondary: tealColor,
+          secondary: tealTextColor,
+          tertiary: goldTextColor,
+          primaryContainer: const Color(0xFFE2F0EE),
+          onPrimaryContainer: inkColor,
           surface: Colors.white,
-          error: pinkColor,
+          error: errorColor,
         ),
         textTheme: const TextTheme(
           headlineMedium: TextStyle(
@@ -138,6 +141,11 @@ class _AppState extends State<PersianTrendApp> {
           labelStyle: const TextStyle(color: mutedColor, fontSize: 13),
         ),
         dividerColor: lineColor,
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.white,
+          indicatorColor: tealColor.withValues(alpha: .12),
+          elevation: 0,
+        ),
         dialogTheme: DialogThemeData(
           backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(

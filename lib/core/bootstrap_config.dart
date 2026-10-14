@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'models.dart';
+import 'peer_contact.dart';
 
 const int maxBootstrapConfigBytes = 128 * 1024;
 const int maxBootstrapPeers = 16;
@@ -30,7 +31,7 @@ class BootstrapConfig {
 
   final List<PeerCard> peers;
 
-  /// Normalized `host:port` / `[v6]:port` strings with numeric public hosts.
+  /// Canonical public IPv4 `host:port` entries supported by the DHT runtime.
   final List<String> dhtBootstrap;
 
   bool get isEmpty => peers.isEmpty && dhtBootstrap.isEmpty;
@@ -147,7 +148,8 @@ List<String> parseDhtBootstrapEntries(List entries) {
   return List<String>.unmodifiable(result);
 }
 
-/// Accepts `a.b.c.d:port` or `[v6]:port`, returning the canonical spelling.
+/// The pinned DHT runtime supports public IPv4 bootstrap addresses. Reject
+/// unsupported addresses here, before a successful import can break discovery.
 String normalizeDhtBootstrapEntry(String entry) {
   if (entry.length > 64 || entry.trim() != entry) {
     throw const FormatException('Invalid DHT bootstrap entry.');
@@ -177,17 +179,12 @@ String normalizeDhtBootstrapEntry(String entry) {
   if (isV6 != bracketed) {
     throw const FormatException('IPv6 DHT bootstrap hosts need brackets.');
   }
-  if (address.isLoopback ||
-      address.isMulticast ||
-      address.isLinkLocal ||
-      address.address == '0.0.0.0' ||
-      address.address == '::' ||
-      address.address == '255.255.255.255') {
+  if (isV6 || !PeerContact.isPublicAddress(address)) {
     throw const FormatException(
-      'DHT bootstrap hosts must be unicast, non-local addresses.',
+      'DHT starting peers require a public IPv4 address. IPv6 and private addresses are not supported by this discovery transport.',
     );
   }
-  return isV6 ? '[${address.address}]:$port' : '${address.address}:$port';
+  return '${address.address}:$port';
 }
 
 /// Keep address aliases for a pinned identity, but avoid ambiguous capabilities

@@ -120,8 +120,8 @@ class IdentityRolesBootstrap {
        );
 
   // Never rename the historical key: it owns existing signed channels.
-  static const publisherStorageKey = 'persiantrend.pilot.identity.v1';
-  static const connectionStorageKey = 'persiantrend.connection.identity.v1';
+  static const publisherStorageKey = 'farvahartrends.pilot.identity.v1';
+  static const connectionStorageKey = 'farvahartrends.connection.identity.v1';
   final Future<String?> Function(String) _read;
   final Future<void> Function(String, String) _write;
   final Future<Map<String, dynamic>> Function() _generate;

@@ -1,15 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
 
-/// Opt-in receiving policy. Missing, interrupted or invalid files fail closed
-/// to the defaults below. Neither choice changes what this device shares.
+/// Fresh installs use public discovery. Damaged settings recover without
+/// re-enabling announcement, public bootstrap or optional routing assistance.
 class ReceivingPolicy {
   const ReceivingPolicy({
     this.restartAfterReboot = false,
     this.internetAnnounce = true,
+    this.publicDiscovery = true,
+    this.discoveryHelper = false,
   });
 
   static const defaults = ReceivingPolicy();
+  static const recovery = ReceivingPolicy(
+    internetAnnounce: false,
+    publicDiscovery: false,
+  );
 
   /// Let the visible receiving service start again after a reboot or an OS
   /// kill. Off by default; an explicit in-app Stop disarms it for the session.
@@ -20,17 +26,27 @@ class ReceivingPolicy {
   /// peers, cached contacts, starting peers and nearby devices, but does not
   /// publish its own presence to the DHT. On by default so discovery works.
   final bool internetAnnounce;
+  final bool publicDiscovery;
+  final bool discoveryHelper;
 
-  ReceivingPolicy copyWith({bool? restartAfterReboot, bool? internetAnnounce}) =>
-      ReceivingPolicy(
-        restartAfterReboot: restartAfterReboot ?? this.restartAfterReboot,
-        internetAnnounce: internetAnnounce ?? this.internetAnnounce,
-      );
+  ReceivingPolicy copyWith({
+    bool? restartAfterReboot,
+    bool? internetAnnounce,
+    bool? publicDiscovery,
+    bool? discoveryHelper,
+  }) => ReceivingPolicy(
+    restartAfterReboot: restartAfterReboot ?? this.restartAfterReboot,
+    internetAnnounce: internetAnnounce ?? this.internetAnnounce,
+    publicDiscovery: publicDiscovery ?? this.publicDiscovery,
+    discoveryHelper: discoveryHelper ?? this.discoveryHelper,
+  );
 
   Map<String, dynamic> toJson() => {
-    'version': 2,
+    'version': 3,
     'restartAfterReboot': restartAfterReboot,
     'internetAnnounce': internetAnnounce,
+    'publicDiscovery': publicDiscovery,
+    'discoveryHelper': discoveryHelper,
   };
 }
 
@@ -76,16 +92,34 @@ class ReceivingPolicyStore {
             restartAfterReboot: restart,
             internetAnnounce: data['internetAnnounce'] as bool,
           );
+        case 3:
+          if (data.length != 5 ||
+              data['internetAnnounce'] is! bool ||
+              data['publicDiscovery'] is! bool ||
+              data['discoveryHelper'] is! bool) {
+            throw const FormatException();
+          }
+          return ReceivingPolicy(
+            restartAfterReboot: restart,
+            internetAnnounce: data['internetAnnounce'] as bool,
+            publicDiscovery: data['publicDiscovery'] as bool,
+            discoveryHelper: data['discoveryHelper'] as bool,
+          );
         default:
           throw const FormatException();
       }
     } on FormatException {
       recovered = true;
       await _quarantine();
-      return ReceivingPolicy.defaults;
+      // Persist the conservative choice so the next launch does not interpret
+      // a quarantined file as a fresh installation and enable public services.
+      try {
+        await save(ReceivingPolicy.recovery);
+      } on FileSystemException catch (_) {}
+      return ReceivingPolicy.recovery;
     } on FileSystemException {
       recovered = true;
-      return ReceivingPolicy.defaults;
+      return ReceivingPolicy.recovery;
     }
   }
 

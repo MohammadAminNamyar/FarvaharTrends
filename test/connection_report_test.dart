@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/connection_report.dart';
+import 'package:farvahar_trends/core/connection_report.dart';
 
 void main() {
   test('manual report retains useful stages without private snapshot data', () {

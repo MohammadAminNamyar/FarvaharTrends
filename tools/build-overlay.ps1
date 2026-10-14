@@ -24,7 +24,7 @@ if (!$SkipInstall) {
     Push-Location (Join-Path $projectRoot 'packages\flutter_pear\pear-end')
     try { Invoke-OverlayNpm -Arguments @('ci','--no-audit','--no-fund') } finally { Pop-Location }
 }
-$manifest = '{"name":"persiantrend-overlay-build","private":true,"version":"1.0.0","dependencies":{"bare-pack":"2.2.0"}}'
+$manifest = '{"name":"farvahartrends-overlay-build","private":true,"version":"1.0.0","dependencies":{"bare-pack":"2.2.0"}}'
 Set-Content -LiteralPath (Join-Path $toolRoot 'package.json') -Value $manifest -Encoding utf8
 if (!$SkipInstall) {
     Push-Location $toolRoot
@@ -36,7 +36,7 @@ try {
     if (!(Test-Path -LiteralPath $dart)) { $dart = (Get-Command dart -ErrorAction Stop).Source }
     & $dart tools/generate_overlay_version.dart
     if ($LASTEXITCODE) { throw 'Transport fingerprint generation failed.' }
-    & (Join-Path $toolRoot 'node_modules\.bin\bare-pack.cmd') --linked --host android-arm64 --host android-x64 --host android-arm --host ios-arm64 --host ios-arm64-simulator --host ios-x64-simulator --out packages/flutter_pear/assets/pear-end.bundle packages/flutter_pear/pear-end/persiantrend.js
+    & (Join-Path $toolRoot 'node_modules\.bin\bare-pack.cmd') --linked --host android-arm64 --host android-x64 --host android-arm --host ios-arm64 --host ios-arm64-simulator --host ios-x64-simulator --out packages/flutter_pear/assets/pear-end.bundle packages/flutter_pear/pear-end/farvahartrends.js
     if ($LASTEXITCODE) { throw 'Transport bundle generation failed.' }
 } finally { Pop-Location }
-Write-Output 'Built the pinned PersianTrend overlay runtime.'
+Write-Output 'Built the pinned FarvaharTrends overlay runtime.'

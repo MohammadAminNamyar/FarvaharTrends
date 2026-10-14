@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/identity_roles.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/identity_roles.dart';
 
 void main() {
   late Identity publisher;

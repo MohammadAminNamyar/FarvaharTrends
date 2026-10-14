@@ -22,7 +22,7 @@ class ChannelRecovery {
   static const iterations = 3;
   static const maxFileBytes = 128 * 1024;
   static final _aad = Uint8List.fromList(
-    utf8.encode('persiantrend/channel-recovery/v1'),
+    utf8.encode('farvahartrends/channel-recovery/v1'),
   );
   static Uint8List _random(int count) {
     final random = Random.secure();

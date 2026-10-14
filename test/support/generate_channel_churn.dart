@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:persian_trend/core/channels.dart';
-import 'package:persian_trend/core/identity.dart';
+import 'package:farvahar_trends/core/channels.dart';
+import 'package:farvahar_trends/core/identity.dart';
 
 // Generate public signed fixtures once; never save their private keys.
 void main() {

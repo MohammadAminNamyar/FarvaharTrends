@@ -17,11 +17,11 @@ $passwordBytes = New-Object byte[] 32
 $random.GetBytes($passwordBytes)
 $random.Dispose()
 $password = [Convert]::ToBase64String($passwordBytes)
-$env:PERSIANTREND_STORE_PASSWORD = $password
+$env:FARVAHARTRENDS_STORE_PASSWORD = $password
 try {
-    & $keytool -genkeypair -keystore $keyPath -storetype JKS -alias pilot -keyalg RSA -keysize 3072 -validity 3650 -dname 'CN=PersianTrend Pilot, OU=Testing, O=PersianTrend' -storepass:env PERSIANTREND_STORE_PASSWORD -keypass:env PERSIANTREND_STORE_PASSWORD -noprompt
+    & $keytool -genkeypair -keystore $keyPath -storetype JKS -alias pilot -keyalg RSA -keysize 3072 -validity 3650 -dname 'CN=FarvaharTrends Pilot, OU=Testing, O=FarvaharTrends' -storepass:env FARVAHARTRENDS_STORE_PASSWORD -keypass:env FARVAHARTRENDS_STORE_PASSWORD -noprompt
     if ($LASTEXITCODE -ne 0) { throw 'Pilot key generation failed.' }
     @('storeFile=../../.signing/pilot.jks', 'keyAlias=pilot', ('storePassword=' + $password), ('keyPassword=' + $password)) |
         Set-Content -LiteralPath $propertiesPath -Encoding ascii
-} finally { Remove-Item Env:PERSIANTREND_STORE_PASSWORD -ErrorAction SilentlyContinue }
+} finally { Remove-Item Env:FARVAHARTRENDS_STORE_PASSWORD -ErrorAction SilentlyContinue }
 Write-Output 'Pilot signing key created in .signing. Do not distribute that directory.'

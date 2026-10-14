@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
 
 void main() {
   late Identity identity;
@@ -13,23 +13,26 @@ void main() {
     expect(PeerCard.fromText(card.toText()).tcpEnrollment, isFalse);
   });
 
-  test('Explicit relay enrollment capability survives pairing and persistence', () {
-    final card = PeerCard(
-      name: 'Volunteer relay',
-      host: '203.0.113.10',
-      certificatePem: identity.certPem,
-      tcpEnrollment: true,
-    );
-    for (final parsed in [
-      PeerCard.fromJson(card.toJson()),
-      PeerCard.fromText(card.toText()),
-    ]) {
-      expect(parsed.tcpEnrollment, isTrue);
-      expect(parsed.id, identity.id);
-      expect(parsed.host, card.host);
-      expect(parsed.toJson().containsKey('keyPem'), isFalse);
-    }
-  });
+  test(
+    'Explicit relay enrollment capability survives pairing and persistence',
+    () {
+      final card = PeerCard(
+        name: 'Volunteer relay',
+        host: '203.0.113.10',
+        certificatePem: identity.certPem,
+        tcpEnrollment: true,
+      );
+      for (final parsed in [
+        PeerCard.fromJson(card.toJson()),
+        PeerCard.fromText(card.toText()),
+      ]) {
+        expect(parsed.tcpEnrollment, isTrue);
+        expect(parsed.id, identity.id);
+        expect(parsed.host, card.host);
+        expect(parsed.toJson().containsKey('keyPem'), isFalse);
+      }
+    },
+  );
 
   test('Enrollment capability cannot replace certificate pin validation', () {
     final card = PeerCard(name: 'Relay', certificatePem: identity.certPem);

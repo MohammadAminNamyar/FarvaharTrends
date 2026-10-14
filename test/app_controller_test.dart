@@ -6,17 +6,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pilot_platform/pilot_platform.dart';
-import 'package:persian_trend/app_controller.dart';
-import 'package:persian_trend/core/bootstrap_config.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/delivery_mode.dart';
-import 'package:persian_trend/core/delivery_mode_store.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_contact.dart';
-import 'package:persian_trend/core/peer_contact_store.dart';
-import 'package:persian_trend/core/peer_engine.dart';
-import 'package:persian_trend/core/reader_state.dart';
-import 'package:persian_trend/core/receiving_policy_store.dart';
+import 'package:farvahar_trends/app_controller.dart';
+import 'package:farvahar_trends/core/bootstrap_config.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/delivery_mode.dart';
+import 'package:farvahar_trends/core/delivery_mode_store.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_contact.dart';
+import 'package:farvahar_trends/core/peer_contact_store.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
+import 'package:farvahar_trends/core/reader_state.dart';
+import 'package:farvahar_trends/core/receiving_policy_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -339,7 +339,7 @@ void main() {
   );
 
   test('Native lease method calls bracket vault reads and writes', () async {
-    const channel = MethodChannel('persiantrend/device');
+    const channel = MethodChannel('farvahartrends/device');
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     final lease = _Lease();
@@ -459,8 +459,39 @@ void main() {
     },
   );
   group('restart after reboot', () {
+    test('start arms the saved opt-in and Stop disarms it without changing the choice', () async {
+      final calls = <bool>[];
+      final app = AppController.forTesting(
+        directory: directory,
+        identity: identity,
+        createEngine: () => _Engine(directory, identity),
+        configureService: (value) async => calls.add(value),
+      );
+      addTearDown(app.dispose);
+      expect(app.restartAfterReboot, isFalse);
+      await app.setRestartAfterReboot(true);
+      expect(app.restartAfterReboot, isTrue);
+      // Not running yet: the service must stay disarmed.
+      expect(calls, [false]);
+      await app.start(active: true);
+      expect(calls, [false, true]);
+      await app.stop();
+      expect(calls, [false, true, false]);
+      expect(app.restartAfterReboot, isTrue);
+      expect(
+        (await ReceivingPolicyStore(directory).load()).restartAfterReboot,
+        isTrue,
+      );
+      // The next normal start re-arms; a local-only start never does.
+      await app.start(active: true);
+      expect(calls.last, isTrue);
+      await app.stop();
+      await app.start(active: false);
+      expect(calls.last, isFalse);
+    });
+
     test(
-      'start arms the saved opt-in and Stop disarms it without changing the choice',
+      'toggling while receiving re-configures the running service',
       () async {
         final calls = <bool>[];
         final app = AppController.forTesting(
@@ -470,52 +501,31 @@ void main() {
           configureService: (value) async => calls.add(value),
         );
         addTearDown(app.dispose);
-        expect(app.restartAfterReboot, isFalse);
-        await app.setRestartAfterReboot(true);
-        expect(app.restartAfterReboot, isTrue);
-        // Not running yet: the service must stay disarmed.
+        await app.start(active: true);
         expect(calls, [false]);
-        await app.start(active: true);
+        await app.setRestartAfterReboot(true);
         expect(calls, [false, true]);
-        await app.stop();
+        await app.setRestartAfterReboot(false);
         expect(calls, [false, true, false]);
-        expect(app.restartAfterReboot, isTrue);
-        expect((await ReceivingPolicyStore(directory).load()).restartAfterReboot, isTrue);
-        // The next normal start re-arms; a local-only start never does.
-        await app.start(active: true);
-        expect(calls.last, isTrue);
-        await app.stop();
-        await app.start(active: false);
-        expect(calls.last, isFalse);
+        expect(
+          (await ReceivingPolicyStore(directory).load()).restartAfterReboot,
+          isFalse,
+        );
       },
     );
 
-    test('toggling while receiving re-configures the running service', () async {
-      final calls = <bool>[];
-      final app = AppController.forTesting(
-        directory: directory,
-        identity: identity,
-        createEngine: () => _Engine(directory, identity),
-        configureService: (value) async => calls.add(value),
-      );
-      addTearDown(app.dispose);
-      await app.start(active: true);
-      expect(calls, [false]);
-      await app.setRestartAfterReboot(true);
-      expect(calls, [false, true]);
-      await app.setRestartAfterReboot(false);
-      expect(calls, [false, true, false]);
-      expect((await ReceivingPolicyStore(directory).load()).restartAfterReboot, isFalse);
-    });
-
-    test('a corrupt policy file loads as off with a localized warning', () async {
-      await File('${directory.path}/receiving-policy.json').writeAsString('{');
-      final app = controller(_Engine(directory, identity));
-      addTearDown(app.dispose);
-      await app.loadReceivingPolicy();
-      expect(app.restartAfterReboot, isFalse);
-      expect(app.error, contains('تنظیمات دریافت'));
-    });
+    test(
+      'a corrupt policy file loads as off with a localized warning',
+      () async {
+        await File('${directory.path}/receiving-policy.json')
+            .writeAsString('{');
+        final app = controller(_Engine(directory, identity));
+        addTearDown(app.dispose);
+        await app.loadReceivingPolicy();
+        expect(app.restartAfterReboot, isFalse);
+        expect(app.error, contains('تنظیمات دریافت'));
+      },
+    );
   });
 
   group('bootstrap documents', () {
@@ -535,13 +545,13 @@ void main() {
         final document = jsonEncode({
           'version': 2,
           'peers': [seed(other).toJson(), seed(identity).toJson()],
-          'dhtBootstrap': ['198.51.100.1:49737'],
+          'dhtBootstrap': ['11.51.100.1:49737'],
         });
         final imported = await app.importBootstrapDocument(document);
         expect(imported.peers.map((card) => card.id), [other.id]);
         expect(engine.added.map((card) => card.id), [other.id]);
         expect(app.bootstrapConfig.peers.single.id, other.id);
-        expect(app.bootstrapConfig.dhtBootstrap, ['198.51.100.1:49737']);
+        expect(app.bootstrapConfig.dhtBootstrap, ['11.51.100.1:49737']);
         // The next engine receives the merged configuration.
         expect(
           (await loadBootstrapConfig(directory)).peers.single.host,
@@ -552,53 +562,63 @@ void main() {
       },
     );
 
-    test('a lone card pairs like a manual import without a dialing hint', () async {
-      final engine = _Engine(directory, identity);
-      final app = controller(engine);
-      addTearDown(app.dispose);
-      final token = PeerCard(name: 'Other', certificatePem: other.certPem)
-          .toText();
-      await app.importBootstrapDocument(token);
-      expect(engine.added.single.id, other.id);
-      expect((await loadBootstrapConfig(directory)).isEmpty, isTrue);
-      expect(
-        () => app.parseBootstrapDocument(app.ownCard().toText()),
-        throwsFormatException,
-      );
-      expect(() => app.parseBootstrapDocument('junk'), throwsFormatException);
-    });
+    test(
+      'a lone card pairs like a manual import without a dialing hint',
+      () async {
+        final engine = _Engine(directory, identity);
+        final app = controller(engine);
+        addTearDown(app.dispose);
+        final token = PeerCard(
+          name: 'Other',
+          certificatePem: other.certPem,
+        ).toText();
+        await app.importBootstrapDocument(token);
+        expect(engine.added.single.id, other.id);
+        expect((await loadBootstrapConfig(directory)).isEmpty, isTrue);
+        expect(
+          () => app.parseBootstrapDocument(app.ownCard().toText()),
+          throwsFormatException,
+        );
+        expect(() => app.parseBootstrapDocument('junk'), throwsFormatException);
+      },
+    );
 
-    test('export contains own card, public helper contacts and DHT nodes', () async {
-      final app = controller(_Engine(directory, identity));
-      addTearDown(app.dispose);
-      expect(
-        parseBootstrapConfig(await app.exportBootstrapDocument()).isEmpty,
-        isTrue,
-      );
-      app.advertisedHost = '203.0.113.5';
-      await app.importBootstrapDocument(
-        jsonEncode({
-          'version': 2,
-          'peers': [],
-          'dhtBootstrap': ['198.51.100.1:49737'],
-        }),
-      );
-      await PeerContactStore(directory).save([
-        PeerContact.create(
-          other,
-          host: '45.33.32.156',
-          port: 7411,
-          lifetimeMs: 60 * 1000,
-        ),
-      ]);
-      final exported = parseBootstrapConfig(await app.exportBootstrapDocument());
-      expect(exported.peers.map((card) => card.id), [identity.id, other.id]);
-      expect(exported.peers.first.host, '203.0.113.5');
-      expect(exported.peers.last.host, '45.33.32.156');
-      expect(exported.peers.last.tcpEnrollment, isTrue);
-      expect(exported.dhtBootstrap, ['198.51.100.1:49737']);
-      expect(jsonDecode(await app.exportBootstrapDocument())['version'], 2);
-    });
+    test(
+      'export contains own card, public helper contacts and DHT nodes',
+      () async {
+        final app = controller(_Engine(directory, identity));
+        addTearDown(app.dispose);
+        expect(
+          parseBootstrapConfig(await app.exportBootstrapDocument()).isEmpty,
+          isTrue,
+        );
+        app.advertisedHost = '203.0.113.5';
+        await app.importBootstrapDocument(
+          jsonEncode({
+            'version': 2,
+            'peers': [],
+            'dhtBootstrap': ['11.51.100.1:49737'],
+          }),
+        );
+        await PeerContactStore(directory).save([
+          PeerContact.create(
+            other,
+            host: '45.33.32.156',
+            port: 7411,
+            lifetimeMs: 60 * 1000,
+          ),
+        ]);
+        final exported = parseBootstrapConfig(
+          await app.exportBootstrapDocument(),
+        );
+        expect(exported.peers.map((card) => card.id), [identity.id, other.id]);
+        expect(exported.peers.first.host, '203.0.113.5');
+        expect(exported.peers.last.host, '45.33.32.156');
+        expect(exported.peers.last.tcpEnrollment, isTrue);
+        expect(exported.dhtBootstrap, ['11.51.100.1:49737']);
+        expect(jsonDecode(await app.exportBootstrapDocument())['version'], 2);
+      },
+    );
 
     test('a corrupt imported list is quarantined with a warning', () async {
       await File('${directory.path}/bootstrap-imported.json')

@@ -20,6 +20,7 @@ class InternetOverlay {
     this.announce = true,
     this.dhtBootstrap = const [],
     this.dhtEphemeral = true,
+    this.publicBootstrap = true,
   });
   final PeerEngine engine;
   final void Function(Map<String, dynamic>) onState;
@@ -36,11 +37,13 @@ class InternetOverlay {
   /// `true` (default): never a DHT routing node for strangers and never
   /// reported as a reachable helper. `false` opts a reachable device in.
   final bool dhtEphemeral;
+  final bool publicBootstrap;
+  int _candidateOffset = 0;
   final NetworkEpoch _networkEpoch = NetworkEpoch();
   Future<void>? _stopping;
   static const namespace = String.fromEnvironment(
-    'PERSIANTREND_DISCOVERY_NAMESPACE',
-    defaultValue: 'persiantrend/public-news/overlay/v1',
+    'FARVAHARTRENDS_DISCOVERY_NAMESPACE',
+    defaultValue: 'farvahartrends/public-news/overlay/v1',
   );
   final Map<String, _OverlayRoute> _routes = {};
   Pear? _pear;
@@ -86,6 +89,7 @@ class InternetOverlay {
         announce: announce,
         dhtBootstrap: dhtBootstrap,
         dhtEphemeral: dhtEphemeral,
+        publicBootstrap: publicBootstrap,
       );
       if (!_current(generation)) {
         await pear.dispose();
@@ -180,6 +184,28 @@ class InternetOverlay {
       }
       final network = await _pear?.networkState();
       if (!_current(generation)) return;
+      if (network != null) {
+        final own = network['ownContact'];
+        await engine.publishDiscoveryEndpoint(
+          own is Map && own['host'] is String ? own['host'] as String : null,
+          own is Map && own['port'] is int ? own['port'] as int : null,
+        );
+        if (!_current(generation)) return;
+        final hints = engine.discoveryContacts;
+        if (hints.isNotEmpty) {
+          final start = _candidateOffset % hints.length;
+          final page = [
+            ...hints.skip(start),
+            ...hints.take(start),
+          ].take(4).toList();
+          _candidateOffset = (start + page.length) % hints.length;
+          await _pear?.offerDiscoveryCandidates([
+            for (final hint in page)
+              {'host': hint.host, 'port': hint.port, 'source': hint.id},
+          ]);
+          if (!_current(generation)) return;
+        }
+      }
       _refreshFailures = 0;
       if (_running && network != null) {
         onState({
@@ -196,6 +222,8 @@ class InternetOverlay {
           'reachableHelper': network['reachableHelper'],
           'dhtEphemeral': network['dhtEphemeral'] ?? network['ephemeral'],
           'announce': network['announce'],
+          'publicBootstrap': network['publicBootstrap'],
+          'candidateCount': network['candidateCount'],
         });
       }
     } catch (_) {
@@ -212,6 +240,7 @@ class InternetOverlay {
   }
 
   Future<void> stop() async {
+    await engine.publishDiscoveryEndpoint(null, null);
     _wanted = false;
     _restartTimer?.cancel();
     _restartTimer = null;
@@ -428,16 +457,13 @@ class _OverlayRoute {
           listener,
           preface,
           deadline: const Duration(seconds: 30),
-        ).then(
-          (flow) {
-            if (!current || socket != null) {
-              flow.socket.destroy();
-              return;
-            }
-            attach(flow.socket, incoming: flow.data);
-          },
-          onError: (Object _) => unawaited(close()),
-        ),
+        ).then((flow) {
+          if (!current || socket != null) {
+            flow.socket.destroy();
+            return;
+          }
+          attach(flow.socket, incoming: flow.data);
+        }, onError: (Object _) => unawaited(close())),
       );
       await owner.engine.registerNativeEndpoint(
         peerId: peerId!,

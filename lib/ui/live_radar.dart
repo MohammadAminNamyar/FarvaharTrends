@@ -169,7 +169,7 @@ class _RadarPainter extends CustomPainter {
       canvas.drawCircle(
         center + Offset(math.cos(angle) * r, math.sin(angle) * r),
         3.5,
-        Paint()..color = i == 0 ? pinkColor : tealColor,
+        Paint()..color = i == 0 ? goldColor : tealColor,
       );
     }
   }

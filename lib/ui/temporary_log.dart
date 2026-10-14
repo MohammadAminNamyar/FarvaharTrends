@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import 'theme.dart';
+
 import 'package:flutter/services.dart';
 
 import '../app_controller.dart';
@@ -6,10 +9,10 @@ import '../core/peer_activity.dart';
 import 'date_format.dart';
 import 'localization.dart';
 
-const _ink = Color(0xFF183F51);
-const _muted = Color(0xFF5A717C);
-const _teal = Color(0xFF267E7B);
-const _line = Color(0xFFDFE9EC);
+const _ink = inkColor;
+const _muted = mutedColor;
+const _teal = tealTextColor;
+const _line = lineColor;
 
 class TemporaryLogView extends StatelessWidget with Localized {
   const TemporaryLogView({super.key, required this.app});
@@ -366,7 +369,7 @@ class TemporaryLogView extends StatelessWidget with Localized {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: const Color(0xFFEDF5F5),
+              color: const Color(0xFFECF5F3),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(

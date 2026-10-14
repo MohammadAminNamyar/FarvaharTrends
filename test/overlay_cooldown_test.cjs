@@ -1,6 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { TransportCooldown } = require('../packages/flutter_pear/pear-end/persiantrend-cooldown')
+const { TransportCooldown } = require('../packages/flutter_pear/pear-end/farvahartrends-cooldown')
 
 test('ordinary network loss does not quarantine a remembered peer', () => {
   const cooling = new TransportCooldown()

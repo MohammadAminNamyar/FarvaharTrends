@@ -391,7 +391,7 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
                       ),
                 key: const ValueKey('news-capacity'),
                 style: TextStyle(
-                  color: bytes > maxBulletinTextBytes ? pinkColor : mutedColor,
+                  color: bytes > maxBulletinTextBytes ? errorColor : mutedColor,
                   fontSize: 11,
                 ),
               ),
@@ -399,7 +399,7 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
               LinearProgressIndicator(
                 value: math.min(bytes / maxBulletinTextBytes, 1),
                 backgroundColor: lineColor,
-                color: bytes > maxBulletinTextBytes ? pinkColor : tealColor,
+                color: bytes > maxBulletinTextBytes ? errorColor : tealColor,
                 minHeight: 3,
               ),
               const SizedBox(height: 20),

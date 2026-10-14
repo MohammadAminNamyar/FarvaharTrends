@@ -139,9 +139,15 @@ class BootstrapStore {
         throw const FormatException('Invalid imported DHT bootstrap entry.');
       }
       final importedAt = entry['importedAtMs'] as int;
-      final node = normalizeDhtBootstrapEntry(entry['entry'] as String);
       if (_expired(importedAt, now)) continue;
-      nodes.add(ImportedDhtNode(node, importedAt));
+      try {
+        final node = normalizeDhtBootstrapEntry(entry['entry'] as String);
+        nodes.add(ImportedDhtNode(node, importedAt));
+      } on FormatException {
+        // Older versions accepted addresses that the worklet could not use.
+        // Keep valid TCP peers and other DHT nodes while dropping that hint.
+        recoveryWarning = 'bootstrap_entries_removed';
+      }
     }
     // Validate the combined shape exactly as a configuration document.
     mergeBootstrapPeers(peers.map((peer) => peer.card));

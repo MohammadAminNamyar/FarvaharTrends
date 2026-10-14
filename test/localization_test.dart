@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/ui/localization.dart';
+import 'package:farvahar_trends/ui/localization.dart';
 
 class _Widget with Localized {
   _Widget(this.fa);

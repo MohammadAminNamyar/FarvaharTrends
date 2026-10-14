@@ -69,15 +69,29 @@ public class FlutterBackgroundServicePlugin implements FlutterPlugin, MethodCall
     }
 
     private void start() {
-        WatchdogReceiver.enqueue(context);
         boolean isForeground = config.isForeground();
         Intent intent = new Intent(context, BackgroundService.class);
-
-        if (isForeground) {
-            ContextCompat.startForegroundService(context, intent);
-        } else {
-            context.startService(intent);
+        intent.putExtra(ServiceStartPolicy.EXPLICIT_START, true);
+        config.setManuallyStopped(false);
+        try {
+            if (isForeground) {
+                ContextCompat.startForegroundService(context, intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (RuntimeException failure) {
+            config.setManuallyStopped(true);
+            throw failure;
         }
+    }
+
+    private void refreshRestartPolicy() {
+        if (!isServiceRunning() || config.isManuallyStopped()) return;
+        // Android remembers the previous onStartCommand return value. Updating
+        // preferences alone cannot change START_NOT_STICKY to START_STICKY.
+        Intent intent = new Intent(context, BackgroundService.class);
+        intent.putExtra(ServiceStartPolicy.POLICY_UPDATE, true);
+        ContextCompat.startForegroundService(context, intent);
     }
 
     @Override
@@ -110,6 +124,7 @@ public class FlutterBackgroundServicePlugin implements FlutterPlugin, MethodCall
 
                 config.setBackgroundHandle(backgroundHandle);
                 config.setIsForeground(isForeground);
+                boolean restartChanged = config.isAutoStartOnBoot() != autoStartOnBoot;
                 config.setAutoStartOnBoot(autoStartOnBoot);
                 config.setInitialNotificationTitle(initialNotificationTitle);
                 config.setInitialNotificationContent(initialNotificationContent);
@@ -119,6 +134,8 @@ public class FlutterBackgroundServicePlugin implements FlutterPlugin, MethodCall
 
                 if (autoStart) {
                     start();
+                } else if (restartChanged) {
+                    refreshRestartPolicy();
                 }
 
                 result.success(true);

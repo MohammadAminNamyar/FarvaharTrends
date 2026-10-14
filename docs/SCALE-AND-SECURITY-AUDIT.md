@@ -1,4 +1,4 @@
-# PersianTrend 0.8.0: delivery, storage and scale review
+# FarvaharTrends 0.8.0: delivery, storage and scale review
 
 Review date: 2026-10-13. Scope: current Flutter/Dart application, Android
 transport bridge, bundled Hyperswarm worklet, protocol, local persistence and UI.
@@ -163,7 +163,7 @@ availability. It omits real discovery, rate limits and correlated partitions.
 With 90% nodes active and 80% links usable it reached 900,352 nodes; with 50%/50%
 it reached 412,833; with 20%/50% it reached only 76. With zero ingress seeds it
 reached zero. These are sensitivity examples for an idealized graph, **not**
-delivery predictions for PersianTrend or Iran.
+delivery predictions for FarvaharTrends or Iran.
 
 The Samsung mobile-data trial observed a fresh emulator publication within
 3,859 ms, with Samsung Wi-Fi and Bluetooth off. The installed test build

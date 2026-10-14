@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 import '../tools/pc_bluetooth_transport.dart';
 

@@ -56,8 +56,8 @@ Future<BootstrapConfig> loadBootstrapConfig(
   Directory directory, {
   BootstrapStore? store,
 }) async {
-  const hasOverride = bool.hasEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
-  const override = String.fromEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
+  const hasOverride = bool.hasEnvironment('FARVAHARTRENDS_BOOTSTRAP_JSON');
+  const override = String.fromEnvironment('FARVAHARTRENDS_BOOTSTRAP_JSON');
   final asset = parseBootstrapConfig(
     hasOverride
         ? override
@@ -211,7 +211,7 @@ void serviceMain(ServiceInstance service) async {
   final probe = DeviceProbe(readDeviceState);
   const cacheOnlyTest =
       DeviceProbe.enabled &&
-      bool.fromEnvironment('PERSIANTREND_E2E_CACHE_ONLY');
+      bool.fromEnvironment('FARVAHARTRENDS_E2E_CACHE_ONLY');
   Future<void> queue = Future.value();
   final initialized = Completer<void>();
   // A reopened Activity can send commands while the native service is still
@@ -442,20 +442,24 @@ void serviceMain(ServiceInstance service) async {
     if (!cacheOnlyTest) await nearby.start();
     if (!engine.nearbyOnly) {
       helper = PhoneHelper(engine);
-      await helper.start();
       if (!cacheOnlyTest) {
         startOverlay = (bool announce) async {
+          final policy = await ReceivingPolicyStore(directory).load();
+          final currentBootstrap = await loadBootstrapConfig(directory);
+          if (policy.discoveryHelper && announce) {
+            await helper?.start();
+          } else {
+            await helper?.stop();
+          }
           overlay = InternetOverlay(
             engine!,
-            // An announcing phone is already visible on the discovery topic,
-            // so it also serves as a DHT routing node: other phones can cache
-            // it as a domestic entry point for later cold starts. A
-            // reader-only phone stays an ephemeral client and answers no
-            // routing queries. Operator-supplied numeric DHT nodes from the
-            // bootstrap document are tried before the hyperdht defaults.
+            // Routing assistance is a separate opt-in. Announcing clients
+            // can still receive/forward news without serving DHT queries or
+            // requesting router leases. Public bootstrap has its own setting.
             announce: announce,
-            dhtBootstrap: bootstrap.dhtBootstrap,
-            dhtEphemeral: !announce,
+            dhtBootstrap: currentBootstrap.dhtBootstrap,
+            dhtEphemeral: !(announce && policy.discoveryHelper),
+            publicBootstrap: policy.publicDiscovery,
             networkKey: () async {
               final state = await readDeviceState();
               return state['stateUnavailable'] == true
@@ -568,8 +572,8 @@ class AppController extends ChangeNotifier {
       for (final code in codes)
         if (code == 'bootstrap_recovery')
           languageCode == 'fa'
-              ? 'فهرست همتاهای شروع واردشده قابل خواندن نبود و کنار گذاشته شد. همتاهای داخلی برنامه همچنان استفاده می‌شوند.'
-              : 'The imported starting-peer list could not be read and was set aside. Built-in starting peers are still used.'
+              ? 'بخشی از تنظیمات همتاهای شروع قابل استفاده نبود. نشانی‌های معتبر همچنان در دسترس هستند.'
+              : 'Some saved starting-peer settings could not be used. Valid contacts remain available.'
         else
           userError('', code: code).text(languageCode),
     ];
@@ -610,6 +614,8 @@ class AppController extends ChangeNotifier {
   /// discovery topic. Off means reader-only on the Internet: the phone still
   /// dials peers it learns about, but publishes no presence to the DHT.
   bool internetAnnounce = true;
+  bool publicDiscovery = true;
+  bool discoveryHelper = false;
   final Future<void> Function(bool autoStartOnBoot)? _configureServiceHook;
   PeerEngine? _local;
   NearbyTransports? _localNearby;
@@ -809,10 +815,10 @@ class AppController extends ChangeNotifier {
         autoStart: false,
         autoStartOnBoot: autoStartOnBoot,
         isForegroundMode: true,
-        notificationChannelId: 'persiantrend_receiving',
+        notificationChannelId: 'farvahartrends_receiving',
         initialNotificationTitle: languageCode == 'fa'
-            ? 'پرشین‌ترند · دریافت و همگام‌سازی'
-            : 'PersianTrend · receiving and syncing',
+            ? 'فروهر ترندز · دریافت و همگام‌سازی'
+            : 'FarvaharTrends · receiving and syncing',
         initialNotificationContent: languageCode == 'fa'
             ? 'جست‌وجوی همتاها و دریافت خبرهای امضاشده. برای توقف، برنامه را باز کنید.'
             : 'Finding peers and receiving signed news. Open the app to stop.',
@@ -830,6 +836,8 @@ class AppController extends ChangeNotifier {
     final policy = await store.load();
     restartAfterReboot = policy.restartAfterReboot;
     internetAnnounce = policy.internetAnnounce;
+    publicDiscovery = policy.publicDiscovery;
+    discoveryHelper = policy.discoveryHelper;
     if (store.recovered) {
       error = languageCode == 'fa'
           ? 'تنظیمات دریافت قابل خواندن نبود و به حالت پیش‌فرض برگشت.'
@@ -841,6 +849,8 @@ class AppController extends ChangeNotifier {
   ReceivingPolicy get _receivingPolicy => ReceivingPolicy(
     restartAfterReboot: restartAfterReboot,
     internetAnnounce: internetAnnounce,
+    publicDiscovery: publicDiscovery,
+    discoveryHelper: discoveryHelper,
   );
 
   Future<void> _persistReceivingPolicy(ReceivingPolicy policy) async {
@@ -872,6 +882,35 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   });
 
+  Future<void> setPublicDiscovery(bool value) => _saveSettings(() async {
+    if (value == publicDiscovery) return;
+    await _persistReceivingPolicy(
+      _receivingPolicy.copyWith(publicDiscovery: value),
+    );
+    publicDiscovery = value;
+    await _reloadDiscoverySettings();
+  });
+
+  Future<void> setDiscoveryHelper(bool value) => _saveSettings(() async {
+    if (value == discoveryHelper) return;
+    await _persistReceivingPolicy(
+      _receivingPolicy.copyWith(discoveryHelper: value),
+    );
+    discoveryHelper = value;
+    await _reloadDiscoverySettings();
+  });
+
+  Future<void> _reloadDiscoverySettings() async {
+    notifyListeners();
+    if (running &&
+        deliveryMode != DeliveryMode.nearbyOnly &&
+        Platform.isAndroid &&
+        await _service.isRunning()) {
+      await _send('setInternetAnnounce', {'value': internetAnnounce});
+    }
+    notifyListeners();
+  }
+
   /// Persist the opt-in first, then re-arm the running service to match.
   /// While receiving is stopped the service stays disarmed until the next
   /// normal start, so an explicit Stop is never undone by a reboot.
@@ -890,7 +929,7 @@ class AppController extends ChangeNotifier {
     _ensureAlive();
     final store = _bootstrapStore ??= BootstrapStore(_directory!);
     _bootstrapConfig = await loadBootstrapConfig(_directory!, store: store);
-    _bootstrapRecoveryWarning = store.recoveryWarning == 'bootstrap_recovery';
+    _bootstrapRecoveryWarning = store.recovered;
     if (_bootstrapRecoveryWarning) _surfaceRecoveryWarnings();
   }
 
@@ -934,6 +973,7 @@ class AppController extends ChangeNotifier {
     for (final card in document.peers) {
       await addPeer(card);
     }
+    if (document.dhtBootstrap.isNotEmpty) await _reloadDiscoverySettings();
     notifyListeners();
     return document;
   }
@@ -971,6 +1011,7 @@ class AppController extends ChangeNotifier {
     final store = _bootstrapStore ??= BootstrapStore(_directory!);
     await store.clear();
     await loadBootstrapConfiguration();
+    await _reloadDiscoverySettings();
     notifyListeners();
   }
 

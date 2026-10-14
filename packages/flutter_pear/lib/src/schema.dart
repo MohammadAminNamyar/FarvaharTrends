@@ -622,7 +622,7 @@ abstract final class PearErrorCode {
   /// (E5.8) — analogous to [beeClosed].
   static const baseClosed = 'BASE_CLOSED';
 
-  /// Legacy upstream owner-relay error; PersianTrend's transport worklet
+  /// Legacy upstream owner-relay error; FarvaharTrends's transport worklet
   /// does not expose that API.
   static const invalidRelayKey = 'INVALID_RELAY_KEY';
 

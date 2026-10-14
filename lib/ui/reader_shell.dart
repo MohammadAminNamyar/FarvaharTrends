@@ -98,10 +98,10 @@ class _ReaderState extends State<ReaderHome>
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: Image.asset(
-                    'assets/brand/logo.jpg',
+                    'assets/brand/farvahar-mark.png',
                     width: 44,
                     height: 44,
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -115,7 +115,7 @@ class _ReaderState extends State<ReaderHome>
                             ? Alignment.centerRight
                             : Alignment.centerLeft,
                         child: Text(
-                          t('پرشین‌ترند', 'PersianTrend'),
+                          t('فروهر ترندز', 'FarvaharTrends'),
                           maxLines: 1,
                           style: const TextStyle(
                             color: inkColor,
@@ -126,7 +126,10 @@ class _ReaderState extends State<ReaderHome>
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        t('خبر، از مردم به مردم', 'INDEPENDENT BY DESIGN'),
+                        t(
+                          'خبر، از مردم به مردم',
+                          'NEWS, FROM PEOPLE TO PEOPLE',
+                        ),
                         style: TextStyle(
                           color: mutedColor,
                           fontSize: fa ? 10 : 7.5,

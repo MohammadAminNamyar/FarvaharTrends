@@ -41,14 +41,13 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
     private static final String LOCK_NAME = BackgroundService.class.getName()
             + ".Lock";
     public static volatile WakeLock lockStatic = null; // notice static
-    // PersianTrend patch: one service-owned acquire, released on every teardown.
+    // FarvaharTrends patch: one service-owned acquire, released on every teardown.
     private WakeLock ownedWakeLock;
     AtomicBoolean isRunning = new AtomicBoolean(false);
     private FlutterEngine backgroundEngine;
     private MethodChannel methodChannel;
     private Config config;
     private DartExecutor.DartEntrypoint dartEntrypoint;
-    private boolean isManuallyStopped = false;
     private String notificationTitle;
     private String notificationContent;
     private String notificationChannelId;
@@ -73,7 +72,7 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
     private void acquireServiceWakeLock() {
         if (ownedWakeLock != null) return;
         final WakeLock lock = getLock(getApplicationContext());
-        // Adopt BootReceiver's handoff acquire instead of adding another reference.
+        // Only the service owns the lock; receivers never acquire it.
         if (!lock.isHeld()) lock.acquire();
         ownedWakeLock = lock;
     }
@@ -115,18 +114,13 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
         notificationContent = config.getInitialNotificationContent();
         notificationId = config.getForegroundNotificationId();
         configForegroundTypes = config.getForegroundServiceTypes();
-        updateNotificationInfo();
-        onStartCommand(null, -1, -1);
+        // Android supplies the real start intent after onCreate. Starting here
+        // would run Dart before checking restart consent or a persisted Stop.
     }
 
     @Override
     public void onDestroy() {
         try {
-            if (!isManuallyStopped) {
-                WatchdogReceiver.enqueue(this);
-            } else {
-                config.setManuallyStopped(true);
-            }
             stopForeground(true);
             isRunning.set(false);
 
@@ -167,7 +161,7 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
     }
 
     /**
-     * PersianTrend patch: returns false when Android refuses the foreground
+     * FarvaharTrends patch: returns false when Android refuses the foreground
      * promotion (missing permission, or the API 31+ background-start rules:
      * ForegroundServiceStartNotAllowedException / ServiceStartNotAllowedException,
      * both IllegalStateException subclasses). Callers decide whether to stop.
@@ -179,7 +173,7 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
 
             int flags = PendingIntent.FLAG_CANCEL_CURRENT;
             if (SDK_INT >= Build.VERSION_CODES.S) {
-                flags |= PendingIntent.FLAG_MUTABLE;
+                flags |= PendingIntent.FLAG_IMMUTABLE;
             }
 
             PendingIntent pi = PendingIntent.getActivity(BackgroundService.this, 11, i, flags);
@@ -213,11 +207,17 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        config.setManuallyStopped(false);
-        WatchdogReceiver.enqueue(this);
+        final boolean explicit = intent != null &&
+                (intent.getBooleanExtra(ServiceStartPolicy.EXPLICIT_START, false) ||
+                 (isRunning.get() && intent.getBooleanExtra(ServiceStartPolicy.POLICY_UPDATE, false)));
+        if (!ServiceStartPolicy.mayStart(explicit, config.isAutoStartOnBoot(),
+                config.isForeground(), config.isManuallyStopped())) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         runService();
 
-        // PersianTrend patch: the OS re-creates a killed service only in the
+        // FarvaharTrends patch: the OS re-creates a killed service only in the
         // opt-in restart mode. An explicit stop calls stopSelf(), which Android
         // never resurrects regardless of the sticky flag (see PATCH-NOTES.md).
         return config.isAutoStartOnBoot() ? START_STICKY : START_NOT_STICKY;
@@ -230,7 +230,6 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
             return;
         }
         boolean started = false;
-        boolean foregroundRefused = false;
         try {
             Log.v(TAG, "Starting flutter engine for background service");
             acquireServiceWakeLock();
@@ -239,7 +238,6 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
                 // Fail soft: without the foreground promotion the engine must
                 // not start; cleanup below releases the lock and the service
                 // stops itself instead of lingering as a background service.
-                foregroundRefused = true;
                 return;
             }
 
@@ -273,10 +271,9 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
             started = true;
 
         } catch (UnsatisfiedLinkError e) {
-            notificationContent = "Error " + e.getMessage();
-            updateNotificationInfo();
-
-            Log.w(TAG, "UnsatisfiedLinkError: After a reboot this may happen for a short period and it is ok to ignore then!" + e.getMessage());
+            Log.w(TAG, "Receiving runtime unavailable");
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Receiving startup failed: " + e.getClass().getSimpleName());
         } finally {
             if (!started) {
                 isRunning.set(false);
@@ -291,7 +288,7 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
                     dartEntrypoint = null;
                     releaseServiceWakeLock();
                 }
-                if (foregroundRefused) stopSelf();
+                stopSelf();
             }
         }
     }
@@ -336,6 +333,10 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
                 JSONObject arg = (JSONObject) call.arguments;
                 boolean value = arg.getBoolean("value");
                 config.setAutoStartOnBoot(value);
+                // Refresh the OS restart flag for the background-isolate API too.
+                Intent refresh = new Intent(this, BackgroundService.class);
+                refresh.putExtra(ServiceStartPolicy.POLICY_UPDATE, true);
+                startService(refresh);
                 result.success(true);
                 return;
             }
@@ -363,9 +364,13 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
             }
 
             if (method.equalsIgnoreCase("stopService")) {
-                isManuallyStopped = true;
-                WatchdogReceiver.remove(this);
-                stopSelf();
+                try {
+                    // Durable before acknowledgement, not deferred to onDestroy.
+                    config.setManuallyStopped(true);
+                } finally {
+                    WatchdogReceiver.remove(this);
+                    stopSelf();
+                }
                 result.success(true);
                 return;
             }

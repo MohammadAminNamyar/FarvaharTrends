@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/snapshot_dto.dart';
+import 'package:farvahar_trends/core/snapshot_dto.dart';
 
 final _peerA = 'a' * 64, _peerB = 'b' * 64, _channel = 'c' * 64;
 
@@ -99,7 +99,7 @@ Map<String, dynamic> realisticSnapshot() => jsonDecode(
     'channels': [
       {
         'id': _channel,
-        'name': 'پرشین ترند',
+        'name': 'فروهر ترندز',
         'description': 'desc',
         'ownerId': _peerB,
         'createdAtMs': 1760000000000,
@@ -223,7 +223,7 @@ void main() {
     final channel = snapshot.channels.single;
     expect(channel.id, _channel);
     expect(channel.hasValidId, isTrue);
-    expect(channel.name, 'پرشین ترند');
+    expect(channel.name, 'فروهر ترندز');
     expect(channel.description, 'desc');
     expect(channel.ownerId, _peerB);
     expect(channel.createdAtMs, 1760000000000);

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/jalali.dart';
-import 'package:persian_trend/ui/date_format.dart';
-import 'package:persian_trend/ui/news_components.dart';
+import 'package:farvahar_trends/core/jalali.dart';
+import 'package:farvahar_trends/ui/date_format.dart';
+import 'package:farvahar_trends/ui/news_components.dart';
 
 // ---------------------------------------------------------------------------
 // Snapshot of the formatters the widgets used before lib/ui/date_format.dart

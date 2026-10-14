@@ -27,7 +27,7 @@ class Identity {
         .convert(utf8.encode(CryptoUtils.encodeRSAPublicKeyToPem(publicKey)))
         .toString();
     final csr = X509Utils.generateRsaCsrPem(
-      {'CN': subjectId, 'O': 'PersianTrend'},
+      {'CN': subjectId, 'O': 'FarvaharTrends'},
       privateKey,
       publicKey,
       signingAlgorithm: 'SHA-256',
@@ -114,7 +114,7 @@ class Identity {
         throw const FormatException('Stored identity fingerprint disagrees.');
       }
       final challenge = Uint8List.fromList(
-        utf8.encode('PersianTrend identity v1'),
+        utf8.encode('FarvaharTrends identity v1'),
       );
       if (!verify(certificate, challenge, identity.sign(challenge))) {
         throw const FormatException('Private key cannot sign for certificate.');

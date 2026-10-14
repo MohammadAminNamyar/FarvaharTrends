@@ -6,10 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/app_controller.dart';
-import 'package:persian_trend/core/delivery_mode.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/main.dart';
+import 'package:farvahar_trends/app_controller.dart';
+import 'package:farvahar_trends/core/delivery_mode.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -47,7 +47,11 @@ void main() {
     if (mode != null) app.deliveryMode = mode;
     addTearDown(app.dispose);
     await tester.pumpWidget(
-      PersianTrendApp(controller: app, initialize: false, animateRadar: false),
+      FarvaharTrendsApp(
+        controller: app,
+        initialize: false,
+        animateRadar: false,
+      ),
     );
     await tester.pumpAndSettle();
     return app;
@@ -350,7 +354,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('اعلام حضور در شبکهٔ اینترنتی'), findsOneWidget);
-    expect(find.textContaining('ناشناسی ایجاد نمی‌کند'), findsOneWidget);
+    expect(
+      find.textContaining('همتاهای متصل همچنان نشانی شما را می‌بینند'),
+      findsOneWidget,
+    );
     expect(app.internetAnnounce, isTrue);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
@@ -389,6 +396,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final language in ['fa', 'en']) {
+    testWidgets('$language discovery controls keep helper opt-in separate', (
+      tester,
+    ) async {
+      final app = await showApp(tester, language: language);
+      await tester.tap(find.byKey(const ValueKey('reader-settings')));
+      await tester.pumpAndSettle();
+      final public = find.byKey(const ValueKey('public-discovery'));
+      final helper = find.byKey(const ValueKey('discovery-helper'));
+      await tester.dragUntilVisible(
+        public,
+        find.byType(SingleChildScrollView).last,
+        const Offset(0, -200),
+      );
+      await tester.pumpAndSettle();
+      expect(app.publicDiscovery, isTrue);
+      expect(app.discoveryHelper, isFalse);
+      await tester.tap(public);
+      await tester.pumpAndSettle();
+      expect(app.publicDiscovery, isFalse);
+      expect(app.internetAnnounce, isTrue);
+      await tester.dragUntilVisible(
+        helper,
+        find.byType(SingleChildScrollView).last,
+        const Offset(0, -200),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(helper);
+      await tester.pumpAndSettle();
+      expect(app.discoveryHelper, isTrue);
+      expect(app.publicDiscovery, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('English announce copy does not promise anonymity', (
     tester,
   ) async {
@@ -403,7 +445,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Announce on the Internet network'), findsOneWidget);
-    expect(find.textContaining('This is not anonymity'), findsOneWidget);
+    expect(
+      find.textContaining('Connected peers still see your address'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -536,6 +581,18 @@ class _ModeController extends AppController {
   Future<void> setInternetAnnounce(bool value) async {
     internetAnnounce = value;
     announceChanges.add(value);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setPublicDiscovery(bool value) async {
+    publicDiscovery = value;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setDiscoveryHelper(bool value) async {
+    discoveryHelper = value;
     notifyListeners();
   }
 

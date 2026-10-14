@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/delivery_mode.dart';
-import 'package:persian_trend/core/delivery_mode_store.dart';
+import 'package:farvahar_trends/core/delivery_mode.dart';
+import 'package:farvahar_trends/core/delivery_mode_store.dart';
 
 void main() {
   late Directory directory;

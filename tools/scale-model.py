@@ -1,7 +1,7 @@
 """Reproducible, optimistic offline model. Never creates network connections.
 
 The million-node graph measures only reachability of one tiny message in a
-fixed random overlay. It is NOT a load test of PersianTrend/HyperDHT. Load and
+fixed random overlay. It is NOT a load test of FarvaharTrends/HyperDHT. Load and
 finite cache limits are calculated separately; the graph omits those costs.
 """
 import json

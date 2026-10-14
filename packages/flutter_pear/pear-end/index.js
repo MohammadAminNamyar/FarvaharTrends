@@ -26,7 +26,7 @@ const { IPC } = typeof BareKit !== 'undefined' ? BareKit : require('./desktop-ip
 const Hyperswarm = require('hyperswarm')
 const DHT = require('hyperdht')
 const { BOOTSTRAP_NODES } = require('hyperdht/lib/constants')
-const { RoutingCache, validNode } = require('./persiantrend-routing')
+const { RoutingCache, validNode } = require('./farvahartrends-routing')
 const Corestore = require('corestore')
 const Hyperbee = require('hyperbee')
 const Hyperdrive = require('hyperdrive')
@@ -178,7 +178,7 @@ function loadOrCreateIdentitySeed () {
   return seed
 }
 
-// Connection identity only, separate from PersianTrend's publisher identity.
+// Connection identity only, separate from FarvaharTrends's publisher identity.
 // Cached domestic helpers are tried alongside public entry peers. Existing
 // encrypted streams do not require continued public-bootstrap availability.
 const routingCache = new RoutingCache(fs, path, STORAGE_DIR)
@@ -988,7 +988,7 @@ async function handle ({ m, p }) {
       message.send(Buffer.from(p.data, 'base64'))
       return null
     }
-    case 'persiantrend.network-state': {
+    case 'farvahartrends.network-state': {
       const own = { host: swarm.dht.host, port: swarm.dht.port }
       return {
         cachedRoutingCount: routingCache.bootstrapNodes().length,
@@ -997,7 +997,7 @@ async function handle ({ m, p }) {
         ownContact: !swarm.dht.ephemeral && !swarm.dht.firewalled && validNode(own) ? own : null
       }
     }
-    case 'persiantrend.remember-peer': {
+    case 'farvahartrends.remember-peer': {
       if (!connections.has(p.peer)) throw new Error('Peer is not connected')
       routingCache.rememberPeer(p.peer, p.topic)
       if (validNode(p.node)) {
@@ -1008,7 +1008,7 @@ async function handle ({ m, p }) {
       saveRouting()
       return null
     }
-    case 'persiantrend.disconnect': {
+    case 'farvahartrends.disconnect': {
       routingCache.forgetPeer(p.peer)
       swarm.leavePeer(Buffer.from(p.peer, 'hex'))
       const conn = connections.get(p.peer)

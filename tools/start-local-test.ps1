@@ -14,11 +14,11 @@ $assigned = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Obj
 if ($assigned.Count -eq 0) {
     throw "This PC no longer has $HostIPv4. Rebuild the local Wi-Fi APK/bootstrap for its current Wi-Fi address before testing."
 }
-$distribution = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'distribution\PersianTrend-local-test'))
+$distribution = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'distribution\FarvaharTrends-local-test'))
 $apk = Get-ChildItem -LiteralPath $distribution -Filter '*-local-wifi.apk' -File -ErrorAction Stop |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
 if ($null -eq $apk -or !([System.IO.Path]::GetFullPath($apk.FullName).StartsWith($distribution + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase))) {
-    throw 'No local Wi-Fi APK exists inside distribution/PersianTrend-local-test.'
+    throw 'No local Wi-Fi APK exists inside distribution/FarvaharTrends-local-test.'
 }
 $peer = Get-VerifiedLocalTestPeer -ProjectRoot $projectRoot
 $bluetoothPython = $null
@@ -61,7 +61,7 @@ if ($null -eq $peer) {
 }
 Write-Output ('Using verified local peer PID ' + $peer.ProcessId + ' at ' + $HostIPv4 + ':45871.')
 $emulatorLauncher = Join-Path $PSScriptRoot 'start-emulator.ps1'
-foreach ($device in @(@{Name='PersianTrend_Android16';Port=5554}, @{Name='PersianTrend_Peer';Port=5556})) {
+foreach ($device in @(@{Name='FarvaharTrends_Android16';Port=5554}, @{Name='FarvaharTrends_Peer';Port=5556})) {
     # The wrapper is hidden; start-emulator opens the interactive Android window.
     # Installing with -r preserves each emulator's existing app identity/data.
     Start-Process -FilePath $powerShell -ArgumentList @('-NoProfile','-File',('"' + $emulatorLauncher + '"'),'-DeviceName',$device.Name,'-Port',$device.Port,'-ApkPath',('"' + $apk.FullName + '"')) `

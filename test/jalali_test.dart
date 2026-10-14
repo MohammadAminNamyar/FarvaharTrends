@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/jalali.dart';
+import 'package:farvahar_trends/core/jalali.dart';
 
 /// (Gregorian y, m, d) -> (Jalali y, m, d), from official calendar tables.
 const knownPairs = <((int, int, int), (int, int, int))>[

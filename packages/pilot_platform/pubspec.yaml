@@ -1,5 +1,5 @@
 name: pilot_platform
-description: Device state and deliberate report export for the PersianTrend pilot.
+description: Device state and deliberate report export for the FarvaharTrends pilot.
 version: 0.1.0
 publish_to: none
 environment:
@@ -12,7 +12,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: org.persiantrend.platform
+        package: org.farvahartrends.platform
         pluginClass: PilotPlatformPlugin
       ios:
         pluginClass: PilotPlatformPlugin

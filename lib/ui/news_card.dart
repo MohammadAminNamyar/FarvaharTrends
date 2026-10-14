@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
+import 'theme.dart';
+
 import 'localization.dart';
 import 'news_components.dart';
 
-const _ink = Color(0xFF183F51);
-const _muted = Color(0xFF5A717C);
-const _teal = Color(0xFF267E7B);
-const _line = Color(0xFFDFE9EC);
+const _ink = inkColor;
+const _muted = mutedColor;
+const _teal = tealTextColor;
+const _line = lineColor;
 
 /// The same article presentation in the channel timeline and followed feed.
 class NewsCard extends StatelessWidget with Localized {
@@ -49,7 +51,7 @@ class NewsCard extends StatelessWidget with Localized {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Material(
-              color: const Color(0xFFF7FAFB),
+              color: const Color(0xFFF7F5F0),
               child: InkWell(
                 onTap: onOpenChannel,
                 child: Container(
@@ -133,7 +135,7 @@ class NewsCard extends StatelessWidget with Localized {
               key: ValueKey('news-footer-${news['id']}'),
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
               decoration: const BoxDecoration(
-                color: Color(0xFFEDF5F5),
+                color: Color(0xFFECF5F3),
                 border: Border(top: BorderSide(color: _line)),
               ),
               child: Column(

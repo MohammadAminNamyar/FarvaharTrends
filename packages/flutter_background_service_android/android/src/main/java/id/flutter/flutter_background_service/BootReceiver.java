@@ -8,7 +8,7 @@ import android.util.Log;
 import androidx.core.content.ContextCompat;
 
 /**
- * PersianTrend patch: boot/update restart is opt-in. The receiver acts only
+ * FarvaharTrends patch: boot/update restart is opt-in. The receiver acts only
  * when the persisted {@code auto_start_on_boot} preference is true, the
  * service is configured as a foreground service and the participant has not
  * explicitly stopped receiving. It never touches the shared wake lock; the
@@ -36,13 +36,12 @@ public class BootReceiver extends BroadcastReceiver {
 
     static boolean isRestartAction(String action) {
         return Intent.ACTION_BOOT_COMPLETED.equals(action)
-                || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
-                || "android.intent.action.QUICKBOOT_POWERON".equals(action)
-                || "com.htc.intent.action.QUICKBOOT_POWERON".equals(action);
+                || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action);
     }
 
     /** Opt-in, foreground-only, and never after an explicit Stop. */
     static boolean shouldStart(Config config) {
-        return config.isAutoStartOnBoot() && config.isForeground() && !config.isManuallyStopped();
+        return ServiceStartPolicy.mayStart(false, config.isAutoStartOnBoot(),
+                config.isForeground(), config.isManuallyStopped());
     }
 }

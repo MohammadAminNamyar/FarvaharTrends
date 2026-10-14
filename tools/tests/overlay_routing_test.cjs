@@ -2,7 +2,7 @@ const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const { RoutingCache, publicV4, MAX_AGE, MAX_NODES } = require('../../packages/flutter_pear/pear-end/persiantrend-routing')
+const { RoutingCache, publicV4, MAX_AGE, MAX_NODES } = require('../../packages/flutter_pear/pear-end/farvahartrends-routing')
 const projectRoot = path.resolve(__dirname, '../..')
 const scratchRoot = path.join(projectRoot, '.tooling', 'test-tmp')
 fs.mkdirSync(scratchRoot, { recursive: true })
@@ -26,7 +26,7 @@ test('Cache survives restart, prefers helper contacts and expires old hints', t 
   const directory = scratch(t)
   let now = 1800000000000
   const cache = new RoutingCache(fs, path, directory, { now: () => now })
-  cache.rememberNodes([{ host: '1.1.1.1', port: 1234 }], true)
+  cache.rememberNodes([{ host: '1.1.1.1', port: 1234 }], true, 'c'.repeat(64))
   cache.rememberNodes([{ host: '8.8.8.8', port: 4321 }])
   cache.rememberPeer('a'.repeat(64), 'b'.repeat(64))
   cache.save()
@@ -40,7 +40,7 @@ test('Cache survives restart, prefers helper contacts and expires old hints', t 
 })
 test('Toxic ports, future timestamps, corrupt and oversized caches fail closed', t => {
   const directory = scratch(t)
-  const filename = path.join(directory, 'persiantrend-routing.json')
+  const filename = path.join(directory, 'farvahartrends-routing.json')
   const now = 1800000000000
   for (const contents of ['{', 'x'.repeat(16385), JSON.stringify({ version: 1, peers: [], nodes: [
     { host: '1.1.1.1', port: 65536, seenAtMs: now },
@@ -56,23 +56,23 @@ test('Bounded cache retains only public route fields and connection keys', t => 
   const directory = scratch(t)
   const cache = new RoutingCache(fs, path, directory)
   for (let index = 1; index <= 100; index++) cache.rememberNodes([
-    { host: '11.0.0.' + index, port: 1234, extraField: 'should-not-be-retained' }
+    { host: '11.0.' + index + '.1', port: 1234, extraField: 'should-not-be-retained' }
   ])
   for (let index = 1; index <= 100; index++) cache.rememberPeer(index.toString(16).padStart(64, '0'), 'b'.repeat(64))
   cache.save()
   assert.equal(cache.bootstrapNodes().length, MAX_NODES)
   assert.equal(cache.peerKeys('b'.repeat(64)).length, 8)
-  const text = fs.readFileSync(path.join(directory, 'persiantrend-routing.json'), 'utf8')
+  const text = fs.readFileSync(path.join(directory, 'farvahartrends-routing.json'), 'utf8')
   assert(!text.includes('extraField'))
   assert(!text.includes('should-not-be-retained'))
   assert(Buffer.byteLength(text) <= 16384)
 })
 test('Operator DHT options default to ephemeral+announced and validate bootstrap nodes', () => {
-  const { dhtOptions, MAX_BOOTSTRAP } = require('../../packages/flutter_pear/pear-end/persiantrend-routing')
-  assert.deepEqual(dhtOptions(), { bootstrap: [], ephemeral: true, announce: true })
-  assert.deepEqual(dhtOptions({ topic: 'x', server: false }), { bootstrap: [], ephemeral: true, announce: true })
-  assert.deepEqual(dhtOptions({ bootstrap: ['1.1.1.1:49737', '8.8.8.8:1', '1.1.1.1:49737'], ephemeral: false, announce: false }),
-    { bootstrap: ['1.1.1.1:49737', '8.8.8.8:1'], ephemeral: false, announce: false })
+  const { dhtOptions, MAX_BOOTSTRAP } = require('../../packages/flutter_pear/pear-end/farvahartrends-routing')
+  assert.deepEqual(dhtOptions(), { bootstrap: [], ephemeral: true, announce: true, publicBootstrap: true })
+  assert.deepEqual(dhtOptions({ topic: 'x', server: false }), { bootstrap: [], ephemeral: true, announce: true, publicBootstrap: true })
+  assert.deepEqual(dhtOptions({ bootstrap: ['1.1.1.1:49737', '8.8.8.8:1', '1.1.1.1:49737'], ephemeral: false, announce: false, publicBootstrap: true }),
+    { bootstrap: ['1.1.1.1:49737', '8.8.8.8:1'], ephemeral: false, announce: false, publicBootstrap: true })
   assert.equal(dhtOptions({ bootstrap: Array.from({ length: MAX_BOOTSTRAP }, (_, i) => `1.1.1.${i + 1}:1`) }).bootstrap.length, MAX_BOOTSTRAP)
   for (const bad of [
     { bootstrap: Array.from({ length: MAX_BOOTSTRAP + 1 }, (_, i) => `1.1.1.${i + 1}:1`) },
@@ -83,12 +83,11 @@ test('Operator DHT options default to ephemeral+announced and validate bootstrap
   ]) assert.throws(() => dhtOptions(bad), undefined, JSON.stringify(bad))
 })
 test('The worklet builds its DHT lazily from the operator options, never as a persistent node by default', () => {
-  const source = fs.readFileSync(path.join(projectRoot, 'packages/flutter_pear/pear-end/persiantrend.js'), 'utf8')
+  const source = fs.readFileSync(path.join(projectRoot, 'packages/flutter_pear/pear-end/farvahartrends.js'), 'utf8')
   assert.doesNotMatch(source, /ephemeral: false/)
   assert.match(source, /let dht = null/)
   assert.match(source, /case 'dht\.configure'/)
-  assert.match(source, /bootstrap: \[\.\.\.network\.bootstrap, \.\.\.cached/)
-  assert.match(source, /ephemeral: network\.ephemeral/)
+  assert.match(source, /new DHT\(networkOptions\(network, cache, BOOTSTRAP_NODES\)\)/)
   assert.match(source, /reachableHelper: helper/)
   assert.match(source, /network\.announce && !dht\.ephemeral && !dht\.firewalled/)
   assert.match(source, /server: network\.announce/)

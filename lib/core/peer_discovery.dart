@@ -58,8 +58,8 @@ class PeerDiscovery {
   static const maxBeaconBytes = 4096;
   static const beaconLifetimeMs = 45000;
   static const replayMemoryMs = 300000;
-  static const kindV1 = 'persiantrend/discovery/v1';
-  static const kindV2 = 'persiantrend/discovery/v2';
+  static const kindV1 = 'farvahartrends/discovery/v1';
+  static const kindV2 = 'farvahartrends/discovery/v2';
   static const maxMulticastInterfaces = 8;
   static final group = InternetAddress('239.255.71.71');
   int? get localPort => _socket?.port;
@@ -91,7 +91,7 @@ class PeerDiscovery {
     final random = Random.secure();
     final body = <String, dynamic>{
       'version': 1,
-      'kind': 'persiantrend/discovery/v1',
+      'kind': 'farvahartrends/discovery/v1',
       'certificatePem': identity.certPem,
       'port': listenPort,
       'nonce': base64UrlEncode(
@@ -785,8 +785,10 @@ class _DiscoverySender {
 /// Direct announcements. It is rotated on every discovery start and lazily
 /// whenever it is older than [rotation]; it is never derived from any key.
 class DiscoverySession {
-  DiscoverySession({this.rotation = const Duration(minutes: 30), Random? random})
-    : _random = random ?? Random.secure() {
+  DiscoverySession({
+    this.rotation = const Duration(minutes: 30),
+    Random? random,
+  }) : _random = random ?? Random.secure() {
     rotate();
   }
   final Duration rotation;

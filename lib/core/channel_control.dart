@@ -52,7 +52,7 @@ class ChannelControl {
     final body = <String, dynamic>{
       'version': 1,
       'kind': kind,
-      'domain': 'persiantrend/channel-$kind/v1',
+      'domain': 'farvahartrends/channel-$kind/v1',
       'channelId': channel.id,
       'signerId': signer.id,
       ...data,
@@ -135,7 +135,7 @@ class ChannelControl {
           !value.keys.every(fields.contains) ||
           value['version'] is! int ||
           value['version'] != 1 ||
-          value['domain'] != 'persiantrend/channel-$kind/v1' ||
+          value['domain'] != 'farvahartrends/channel-$kind/v1' ||
           value['channelId'] != channel.id ||
           value['signerId'] != Identity.certificateId(certificate) ||
           !Identity.verify(certificate, bytes, signature)) {

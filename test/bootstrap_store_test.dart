@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/bootstrap_config.dart';
-import 'package:persian_trend/core/bootstrap_store.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
+import 'package:farvahar_trends/core/bootstrap_config.dart';
+import 'package:farvahar_trends/core/bootstrap_store.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
 
 void main() {
   late Directory directory;
@@ -32,7 +32,7 @@ void main() {
   File file() => File('${directory.path}/bootstrap-imported.json');
   PeerCard card(
     Identity identity, {
-    String host = '203.0.113.9',
+    String host = '11.0.113.9',
     int port = 7411,
   }) => PeerCard(
     name: 'Seed',
@@ -45,15 +45,15 @@ void main() {
     final imported = await store().import(
       BootstrapConfig(
         peers: [card(a)],
-        dhtBootstrap: const ['203.0.113.1:49737'],
+        dhtBootstrap: const ['11.0.113.1:49737'],
       ),
     );
     expect(imported.peers.single.importedAtMs, now);
     expect(imported.dhtBootstrap.single.importedAtMs, now);
     final loaded = await store().load();
     expect(loaded.peers.single.card.id, a.id);
-    expect(loaded.dhtBootstrap.single.entry, '203.0.113.1:49737');
-    expect(loaded.toConfig().peers.single.host, '203.0.113.9');
+    expect(loaded.dhtBootstrap.single.entry, '11.0.113.1:49737');
+    expect(loaded.toConfig().peers.single.host, '11.0.113.9');
     expect(await File('${file().path}.next').exists(), isFalse);
     expect(await File('${file().path}.bak').exists(), isFalse);
   });
@@ -72,6 +72,30 @@ void main() {
       await store().import(BootstrapConfig(peers: [card(b)]));
       now += 89 * 24 * 60 * 60 * 1000;
       expect((await store().load()).peers.single.card.id, b.id);
+    },
+  );
+
+  test(
+    'unsupported legacy DHT addresses do not discard valid contacts',
+    () async {
+      await store().import(
+        BootstrapConfig(
+          peers: [card(a)],
+          dhtBootstrap: const ['11.0.113.1:49737'],
+        ),
+      );
+      final data =
+          jsonDecode(await file().readAsString()) as Map<String, dynamic>;
+      (data['dhtBootstrap'] as List).add({
+        'entry': '[2001:db8::1]:49737',
+        'importedAtMs': now,
+      });
+      await file().writeAsString(jsonEncode(data));
+      final recovered = store();
+      final loaded = await recovered.load();
+      expect(loaded.peers.single.card.id, a.id);
+      expect(loaded.dhtBootstrap.single.entry, '11.0.113.1:49737');
+      expect(recovered.recoveryWarning, 'bootstrap_entries_removed');
     },
   );
 
@@ -133,17 +157,17 @@ void main() {
       now += 1000;
       await store().import(
         BootstrapConfig(
-          peers: [card(i.isEven ? a : b, host: '203.0.113.$i')],
-          dhtBootstrap: ['198.51.100.$i:49737'],
+          peers: [card(i.isEven ? a : b, host: '11.0.113.$i')],
+          dhtBootstrap: ['11.51.100.$i:49737'],
         ),
       );
     }
     final loaded = await store().load();
     expect(loaded.peers.length, BootstrapStore.maxPeers);
     expect(loaded.dhtBootstrap.length, BootstrapStore.maxDhtBootstrap);
-    expect(loaded.peers.first.card.host, '203.0.113.18');
-    expect(loaded.peers.any((p) => p.card.host == '203.0.113.1'), isFalse);
-    expect(loaded.dhtBootstrap.first.entry, '198.51.100.18:49737');
+    expect(loaded.peers.first.card.host, '11.0.113.18');
+    expect(loaded.peers.any((p) => p.card.host == '11.0.113.1'), isFalse);
+    expect(loaded.dhtBootstrap.first.entry, '11.51.100.18:49737');
   });
 
   test('clear forgets every imported entry', () async {

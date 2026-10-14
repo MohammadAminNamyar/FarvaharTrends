@@ -15,7 +15,7 @@ const int maxBulletinTextBytes = 1024;
 const int maxRunIdLength = 64;
 const int maxTrustedPeers = 64;
 const int defaultPeerPort = 45871;
-const String _pairingPrefix = 'persiantrend:pair:v1:';
+const String _pairingPrefix = 'farvahartrends:pair:v1:';
 final RegExp _idPattern = RegExp(r'^[0-9a-f]{64}$');
 final RegExp _controlPattern = RegExp(r'[\x00-\x1f\x7f]');
 
@@ -123,7 +123,7 @@ class PeerCard {
 
   factory PeerCard.fromText(String text) {
     if (text.length > maxEnvelopeBytes || !text.startsWith(_pairingPrefix)) {
-      throw const FormatException('Invalid PersianTrend pairing token.');
+      throw const FormatException('Invalid FarvaharTrends pairing token.');
     }
     try {
       final bytes = base64Url.decode(text.substring(_pairingPrefix.length));
@@ -134,7 +134,7 @@ class PeerCard {
     } on FormatException {
       rethrow;
     } catch (_) {
-      throw const FormatException('Invalid PersianTrend pairing token.');
+      throw const FormatException('Invalid FarvaharTrends pairing token.');
     }
   }
 }

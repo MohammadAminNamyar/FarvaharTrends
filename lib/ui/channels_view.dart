@@ -359,7 +359,7 @@ class ChannelsView with Localized {
                           key: ValueKey('trust-error-$id'),
                           style: const TextStyle(
                             fontSize: 10,
-                            color: pinkColor,
+                            color: errorColor,
                           ),
                         ),
                       ),

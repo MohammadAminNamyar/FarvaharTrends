@@ -22,7 +22,7 @@ public class WatchdogReceiver extends BroadcastReceiver {
     }
 
     public static void enqueue(Context context, int millis) {
-        // PersianTrend pilot: receiving starts explicitly; never schedule restart alarms.
+        // FarvaharTrends pilot: receiving starts explicitly; never schedule restart alarms.
         // Keep remove() available to cancel a pending alarm from an older installation.
     }
 

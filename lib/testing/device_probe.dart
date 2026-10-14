@@ -9,7 +9,7 @@ import 'package:path_provider/path_provider.dart';
 /// Disabled in distribution builds. No keys, IPs or subscriptions are exported.
 class DeviceProbe {
   DeviceProbe(this.deviceState);
-  static const enabled = bool.fromEnvironment('PERSIANTREND_E2E');
+  static const enabled = bool.fromEnvironment('FARVAHARTRENDS_E2E');
   final Future<Map<String, dynamic>> Function() deviceState;
   final String session = List.generate(
     12,
@@ -85,14 +85,14 @@ class DeviceProbe {
             }
           }
           final pending = File(
-            '${_directory!.path}/persiantrend-e2e-status.json.next',
+            '${_directory!.path}/farvahartrends-e2e-status.json.next',
           );
           await pending.writeAsString(
             jsonEncode({...summary, 'messages': _messages.values.toList()}),
             flush: true,
           );
           await pending.rename(
-            '${_directory!.path}/persiantrend-e2e-status.json',
+            '${_directory!.path}/farvahartrends-e2e-status.json',
           );
         })
         .catchError((Object _) {

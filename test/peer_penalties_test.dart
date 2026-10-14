@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/peer_penalties.dart';
+import 'package:farvahar_trends/core/peer_penalties.dart';
 
 void main() {
   test('penalties outlive contact eviction, expire and stay bounded', () {

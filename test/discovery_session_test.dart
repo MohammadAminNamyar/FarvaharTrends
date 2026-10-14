@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/models.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/models.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 /// Beacon v2: the LAN sees a rotating session token and a port, never the
 /// certificate. The certificate is disclosed only inside a TLS handshake to an
@@ -95,7 +95,10 @@ void main() {
   }
 
   Future<RawDatagramSocket> sender() async {
-    final socket = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final socket = await RawDatagramSocket.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
     sockets.add(socket);
     return socket;
   }
@@ -126,7 +129,7 @@ void main() {
       'expiresAtMs',
     });
     expect(raw['version'], 2);
-    expect(raw['kind'], 'persiantrend/discovery/v2');
+    expect(raw['kind'], 'farvahartrends/discovery/v2');
     expect(raw['session'], session.token);
     expect(raw['expiresAtMs'], 7 + 45000);
     expect(utf8.decode(bytes), isNot(contains('CERTIFICATE')));
@@ -161,7 +164,8 @@ void main() {
       PeerDiscovery.beacon(a, 45871),
     ]) {
       expect(
-        () => PeerDiscovery.parseSessionBeacon(bad, InternetAddress.loopbackIPv4),
+        () =>
+            PeerDiscovery.parseSessionBeacon(bad, InternetAddress.loopbackIPv4),
         throwsFormatException,
       );
     }
@@ -176,19 +180,24 @@ void main() {
     );
   });
 
-  test('session tokens are random, rotate on demand and expire by age', () async {
-    final session = DiscoverySession(rotation: const Duration(milliseconds: 60));
-    final first = session.token;
-    expect(DiscoverySession.validToken(first), isTrue);
-    expect(first, isNot(DiscoverySession().token));
-    session.rotate();
-    final second = session.token;
-    expect(second, isNot(first));
-    expect(session.token, second);
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-    expect(session.token, isNot(second));
-    expect(session.rotations, 3);
-  });
+  test(
+    'session tokens are random, rotate on demand and expire by age',
+    () async {
+      final session = DiscoverySession(
+        rotation: const Duration(milliseconds: 60),
+      );
+      final first = session.token;
+      expect(DiscoverySession.validToken(first), isTrue);
+      expect(first, isNot(DiscoverySession().token));
+      session.rotate();
+      final second = session.token;
+      expect(second, isNot(first));
+      expect(session.token, second);
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(session.token, isNot(second));
+      expect(session.rotations, 3);
+    },
+  );
 
   test(
     'listener accepts v1 and v2, ignores replay and answers with v2 only',
@@ -269,139 +278,130 @@ void main() {
     },
   );
 
-  test(
-    'peers learn certificates only by dialing after a v2 beacon and end up '
-    'connected as automatic contacts',
-    () async {
-      final portA = await freeUdpPort();
-      final portB = await freeUdpPort();
-      final left = engine(a, 'a', portA);
-      final right = engine(b, 'b', portB);
-      await left.start(activeMode: false);
-      await right.start(activeMode: false);
-      expect(left.discoverySessionToken, isNot(right.discoverySessionToken));
-      expect(DiscoverySession.validToken(left.discoverySessionToken), isTrue);
-      final tlsA = (await left.snapshot())['listenPort'] as int;
-      final tlsB = (await right.snapshot())['listenPort'] as int;
-      final socket = await sender();
-      // Neither engine has any pin. Each beacon only names a token and port;
-      // the first probe fails at the peer's mTLS gate but yields the
-      // certificate, so the peer's own probe can then complete mTLS.
-      final deadline = DateTime.now().add(const Duration(seconds: 15));
-      while ((await left.snapshot())['connectedCount'] != 1 ||
-          (await right.snapshot())['connectedCount'] != 1) {
-        if (DateTime.now().isAfter(deadline)) {
-          fail('Peers did not connect through beacon v2 probes.');
-        }
-        socket.send(
-          spoofedFrom(right.discoverySessionToken, tlsB),
-          InternetAddress.loopbackIPv4,
-          portA,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        socket.send(
-          spoofedFrom(left.discoverySessionToken, tlsA),
-          InternetAddress.loopbackIPv4,
-          portB,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 600));
+  test('peers learn certificates only by dialing after a v2 beacon and end up '
+      'connected as automatic contacts', () async {
+    final portA = await freeUdpPort();
+    final portB = await freeUdpPort();
+    final left = engine(a, 'a', portA);
+    final right = engine(b, 'b', portB);
+    await left.start(activeMode: false);
+    await right.start(activeMode: false);
+    expect(left.discoverySessionToken, isNot(right.discoverySessionToken));
+    expect(DiscoverySession.validToken(left.discoverySessionToken), isTrue);
+    final tlsA = (await left.snapshot())['listenPort'] as int;
+    final tlsB = (await right.snapshot())['listenPort'] as int;
+    final socket = await sender();
+    // Neither engine has any pin. Each beacon only names a token and port;
+    // the first probe fails at the peer's mTLS gate but yields the
+    // certificate, so the peer's own probe can then complete mTLS.
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while ((await left.snapshot())['connectedCount'] != 1 ||
+        (await right.snapshot())['connectedCount'] != 1) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('Peers did not connect through beacon v2 probes.');
       }
-      for (final (engine, other) in [(left, b), (right, a)]) {
-        final status = await engine.snapshot();
-        expect(status['connectedCount'], 1);
-        expect(status['discoveredCount'], 1);
-        final peer = (status['peers'] as List).single as Map;
-        expect(peer['id'], other.id);
-        expect(peer['trust'], 'unverified');
-        expect(peer['origin'], 'lan');
-      }
-      // A later beacon from a known session refreshes the route without any
-      // new unknown-certificate probe: the link stays, nothing is rejected.
-      final rejectedBefore = (await left.snapshot())['rejectedCount'];
       socket.send(
         spoofedFrom(right.discoverySessionToken, tlsB),
         InternetAddress.loopbackIPv4,
         portA,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      final after = await left.snapshot();
-      expect(after['connectedCount'], 1);
-      expect(after['rejectedCount'], rejectedBefore);
-    },
-  );
-
-  test(
-    'hostile beacons at a victim endpoint are bounded and do not block '
-    'discovery of another peer',
-    () async {
-      final portA = await freeUdpPort();
-      final left = engine(a, 'hostile-a', portA);
-      await left.start(activeMode: false);
-      final socket = await sender();
-      final (closed, hits) = await victim();
-      // One token, one victim: a flood of fresh beacons causes one probe and
-      // then exponential backoff; no beacon can retrigger a dial early.
-      for (var i = 0; i < 12; i++) {
-        socket.send(
-          PeerDiscovery.sessionBeacon(DiscoverySession(), closed.port),
-          InternetAddress.loopbackIPv4,
-          portA,
-        );
-      }
-      await until(() async => hits.isNotEmpty);
-      await Future<void>.delayed(const Duration(milliseconds: 800));
-      expect(hits, hasLength(1));
-      // Many tokens at one victim still share the endpoint backoff and the
-      // per-endpoint window budget.
-      final many = <(RawServerSocket, List<int>)>[];
-      for (var i = 0; i < 6; i++) {
-        many.add(await victim());
-      }
-      // One token aimed at many victims is bounded by its session budget.
-      final hostile = DiscoverySession();
-      for (final (server, _) in many) {
-        socket.send(
-          PeerDiscovery.sessionBeacon(hostile, server.port),
-          InternetAddress.loopbackIPv4,
-          portA,
-        );
-      }
-      await Future<void>.delayed(const Duration(seconds: 2));
-      final total = many.fold<int>(0, (sum, v) => sum + v.$2.length);
-      expect(total, inInclusiveRange(1, PeerEngine.discoveryProbesPerEndpoint));
-      expect((await left.snapshot())['connectedCount'], 0);
-      expect((await left.snapshot())['discoveredCount'], 0);
-      // The honest peer still gets through on the same listener.
-      final portB = await freeUdpPort();
-      final right = engine(b, 'hostile-b', portB);
-      await right.start(activeMode: false);
-      final tlsA = (await left.snapshot())['listenPort'] as int;
-      final tlsB = (await right.snapshot())['listenPort'] as int;
-      final deadline = DateTime.now().add(const Duration(seconds: 15));
-      while ((await left.snapshot())['connectedCount'] != 1) {
-        if (DateTime.now().isAfter(deadline)) {
-          fail('Honest peer did not connect while hostile beacons existed.');
-        }
-        socket.send(
-          spoofedFrom(right.discoverySessionToken, tlsB),
-          InternetAddress.loopbackIPv4,
-          portA,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        socket.send(
-          spoofedFrom(left.discoverySessionToken, tlsA),
-          InternetAddress.loopbackIPv4,
-          portB,
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 600));
-      }
-      expect(
-        ((await left.snapshot())['peers'] as List).single['id'],
-        b.id,
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      socket.send(
+        spoofedFrom(left.discoverySessionToken, tlsA),
+        InternetAddress.loopbackIPv4,
+        portB,
       );
-      expect(hits, hasLength(1));
-    },
-  );
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    }
+    for (final (engine, other) in [(left, b), (right, a)]) {
+      final status = await engine.snapshot();
+      expect(status['connectedCount'], 1);
+      expect(status['discoveredCount'], 1);
+      final peer = (status['peers'] as List).single as Map;
+      expect(peer['id'], other.id);
+      expect(peer['trust'], 'unverified');
+      expect(peer['origin'], 'lan');
+    }
+    // A later beacon from a known session refreshes the route without any
+    // new unknown-certificate probe: the link stays, nothing is rejected.
+    final rejectedBefore = (await left.snapshot())['rejectedCount'];
+    socket.send(
+      spoofedFrom(right.discoverySessionToken, tlsB),
+      InternetAddress.loopbackIPv4,
+      portA,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final after = await left.snapshot();
+    expect(after['connectedCount'], 1);
+    expect(after['rejectedCount'], rejectedBefore);
+  });
+
+  test('hostile beacons at a victim endpoint are bounded and do not block '
+      'discovery of another peer', () async {
+    final portA = await freeUdpPort();
+    final left = engine(a, 'hostile-a', portA);
+    await left.start(activeMode: false);
+    final socket = await sender();
+    final (closed, hits) = await victim();
+    // One token, one victim: a flood of fresh beacons causes one probe and
+    // then exponential backoff; no beacon can retrigger a dial early.
+    for (var i = 0; i < 12; i++) {
+      socket.send(
+        PeerDiscovery.sessionBeacon(DiscoverySession(), closed.port),
+        InternetAddress.loopbackIPv4,
+        portA,
+      );
+    }
+    await until(() async => hits.isNotEmpty);
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    expect(hits, hasLength(1));
+    // Many tokens at one victim still share the endpoint backoff and the
+    // per-endpoint window budget.
+    final many = <(RawServerSocket, List<int>)>[];
+    for (var i = 0; i < 6; i++) {
+      many.add(await victim());
+    }
+    // One token aimed at many victims is bounded by its session budget.
+    final hostile = DiscoverySession();
+    for (final (server, _) in many) {
+      socket.send(
+        PeerDiscovery.sessionBeacon(hostile, server.port),
+        InternetAddress.loopbackIPv4,
+        portA,
+      );
+    }
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final total = many.fold<int>(0, (sum, v) => sum + v.$2.length);
+    expect(total, inInclusiveRange(1, PeerEngine.discoveryProbesPerEndpoint));
+    expect((await left.snapshot())['connectedCount'], 0);
+    expect((await left.snapshot())['discoveredCount'], 0);
+    // The honest peer still gets through on the same listener.
+    final portB = await freeUdpPort();
+    final right = engine(b, 'hostile-b', portB);
+    await right.start(activeMode: false);
+    final tlsA = (await left.snapshot())['listenPort'] as int;
+    final tlsB = (await right.snapshot())['listenPort'] as int;
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while ((await left.snapshot())['connectedCount'] != 1) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('Honest peer did not connect while hostile beacons existed.');
+      }
+      socket.send(
+        spoofedFrom(right.discoverySessionToken, tlsB),
+        InternetAddress.loopbackIPv4,
+        portA,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      socket.send(
+        spoofedFrom(left.discoverySessionToken, tlsA),
+        InternetAddress.loopbackIPv4,
+        portB,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    }
+    expect(((await left.snapshot())['peers'] as List).single['id'], b.id);
+    expect(hits, hasLength(1));
+  });
 
   test('the engine still admits a deprecated signed v1 beacon', () async {
     final portA = await freeUdpPort();

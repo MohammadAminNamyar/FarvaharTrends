@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:persian_trend/core/identity.dart';
-import 'package:persian_trend/core/loopback_preface.dart';
-import 'package:persian_trend/core/peer_discovery.dart';
-import 'package:persian_trend/core/peer_engine.dart';
+import 'package:farvahar_trends/core/identity.dart';
+import 'package:farvahar_trends/core/loopback_preface.dart';
+import 'package:farvahar_trends/core/peer_discovery.dart';
+import 'package:farvahar_trends/core/peer_engine.dart';
 
 /// Loopback proxies are reachable by any app on the device. These checks race
 /// hostile local callers against the legitimate one on every preface reader.
@@ -48,7 +48,10 @@ void main() {
         if (!done.isCompleted) done.complete(true);
       },
     );
-    return done.future.timeout(const Duration(seconds: 4), onTimeout: () => false);
+    return done.future.timeout(
+      const Duration(seconds: 4),
+      onTimeout: () => false,
+    );
   }
 
   group('tokens', () {
@@ -66,31 +69,30 @@ void main() {
   });
 
   group('single-use flow (acceptOnce)', () {
-    test(
-      'wrong, partial and empty prefaces are dropped; the legitimate caller still succeeds',
-      () async {
-        final token = LoopbackPreface.newToken();
-        final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-        final flow = LoopbackPreface.acceptOnce(
-          server,
-          token,
-          deadline: const Duration(seconds: 6),
-          readTimeout: const Duration(milliseconds: 400),
-        );
-        final wrong = await dial(server.port, flipped(token));
-        expect(await droppedByListener(wrong), true);
-        final partial = await dial(server.port, token.sublist(0, 10));
-        expect(await droppedByListener(partial), true);
-        final silent = await dial(server.port, const []);
-        expect(await droppedByListener(silent), true);
-        final legitimate = await dial(server.port, [...token, 0x16, 0x03, 0x01]);
-        final accepted = await flow;
-        expect(accepted.socket.remotePort, legitimate.port);
-        final first = await accepted.data.first.timeout(const Duration(seconds: 2));
-        expect(first, [0x16, 0x03, 0x01]);
-        accepted.socket.destroy();
-      },
-    );
+    test('wrong, partial and empty prefaces are dropped; the legitimate caller still succeeds', () async {
+      final token = LoopbackPreface.newToken();
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final flow = LoopbackPreface.acceptOnce(
+        server,
+        token,
+        deadline: const Duration(seconds: 6),
+        readTimeout: const Duration(milliseconds: 400),
+      );
+      final wrong = await dial(server.port, flipped(token));
+      expect(await droppedByListener(wrong), true);
+      final partial = await dial(server.port, token.sublist(0, 10));
+      expect(await droppedByListener(partial), true);
+      final silent = await dial(server.port, const []);
+      expect(await droppedByListener(silent), true);
+      final legitimate = await dial(server.port, [...token, 0x16, 0x03, 0x01]);
+      final accepted = await flow;
+      expect(accepted.socket.remotePort, legitimate.port);
+      final first = await accepted.data.first.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(first, [0x16, 0x03, 0x01]);
+      accepted.socket.destroy();
+    });
 
     test('a replayed preface after use is refused', () async {
       final token = LoopbackPreface.newToken();
@@ -115,28 +117,25 @@ void main() {
       accepted.socket.destroy();
     });
 
-    test(
-      'a late legitimate caller past the flow deadline reaches nothing and queues stay bounded',
-      () async {
-        final token = LoopbackPreface.newToken();
-        final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-        final port = server.port;
-        final flow = LoopbackPreface.acceptOnce(
-          server,
-          token,
-          deadline: const Duration(milliseconds: 300),
-        );
-        await expectLater(flow, throwsA(isA<TimeoutException>()));
-        var refused = false;
-        try {
-          final late = await dial(port, token);
-          refused = await droppedByListener(late);
-        } on SocketException {
-          refused = true;
-        }
-        expect(refused, true);
-      },
-    );
+    test('a late legitimate caller past the flow deadline reaches nothing and queues stay bounded', () async {
+      final token = LoopbackPreface.newToken();
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = server.port;
+      final flow = LoopbackPreface.acceptOnce(
+        server,
+        token,
+        deadline: const Duration(milliseconds: 300),
+      );
+      await expectLater(flow, throwsA(isA<TimeoutException>()));
+      var refused = false;
+      try {
+        final late = await dial(port, token);
+        refused = await droppedByListener(late);
+      } on SocketException {
+        refused = true;
+      }
+      expect(refused, true);
+    });
 
     test('failed attempts are bounded and abandon the flow', () async {
       final token = LoopbackPreface.newToken();
@@ -148,7 +147,10 @@ void main() {
         readTimeout: const Duration(milliseconds: 200),
       );
       for (var i = 0; i < LoopbackPreface.maxAttempts; i++) {
-        final hostile = await dial(server.port, Uint8List(LoopbackPreface.length));
+        final hostile = await dial(
+          server.port,
+          Uint8List(LoopbackPreface.length),
+        );
         expect(await droppedByListener(hostile), true);
       }
       await expectLater(flow, throwsA(isA<SocketException>()));
@@ -206,34 +208,28 @@ void main() {
           Identity.certificateId(certificate.pem) == local.id,
     ).timeout(const Duration(seconds: 3));
 
-    test(
-      'wrong and partial prefaces are rejected before TLS; the native caller with the secret connects',
-      () async {
-        final port = engine.bluetoothIngressPort!;
-        final secret = engine.bluetoothIngressPreface!;
-        final wrong = await dial(port, flipped(secret));
-        expect(await droppedByListener(wrong), true);
-        final partial = await dial(port, secret.sublist(0, 5));
-        await partial.close();
-        expect(await droppedByListener(partial), true);
-        await until(() async => (await engine.snapshot())['rejectedCount'] >= 2);
-        expect((await engine.snapshot())['connectedCount'], 0);
-        // A TLS client without the preface never reaches the handshake.
-        await expectLater(
-          dial(port, const []).then(tls),
-          throwsA(anything),
-        );
-        final legitimate = await dial(port, secret);
-        final secure = await tls(legitimate);
-        sockets.add(secure);
-        secure.listen((_) {}, onError: (Object _) {});
-        await until(() async => (await engine.snapshot())['connectedCount'] == 1);
-        expect(
-          ((await engine.snapshot())['peers'] as List).single['transport'],
-          'bluetooth',
-        );
-      },
-    );
+    test('wrong and partial prefaces are rejected before TLS; the native caller with the secret connects', () async {
+      final port = engine.bluetoothIngressPort!;
+      final secret = engine.bluetoothIngressPreface!;
+      final wrong = await dial(port, flipped(secret));
+      expect(await droppedByListener(wrong), true);
+      final partial = await dial(port, secret.sublist(0, 5));
+      await partial.close();
+      expect(await droppedByListener(partial), true);
+      await until(() async => (await engine.snapshot())['rejectedCount'] >= 2);
+      expect((await engine.snapshot())['connectedCount'], 0);
+      // A TLS client without the preface never reaches the handshake.
+      await expectLater(dial(port, const []).then(tls), throwsA(anything));
+      final legitimate = await dial(port, secret);
+      final secure = await tls(legitimate);
+      sockets.add(secure);
+      secure.listen((_) {}, onError: (Object _) {});
+      await until(() async => (await engine.snapshot())['connectedCount'] == 1);
+      expect(
+        ((await engine.snapshot())['peers'] as List).single['transport'],
+        'bluetooth',
+      );
+    });
 
     test('an engine restart invalidates every ingress secret', () async {
       final previousPort = engine.bluetoothIngressPort!;
