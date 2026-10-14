@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'localization.dart';
 import 'news_components.dart';
 
 const _ink = Color(0xFF183F51);
@@ -8,7 +9,7 @@ const _teal = Color(0xFF267E7B);
 const _line = Color(0xFFDFE9EC);
 
 /// The same article presentation in the channel timeline and followed feed.
-class NewsCard extends StatelessWidget {
+class NewsCard extends StatelessWidget with Localized {
   const NewsCard({
     super.key,
     required this.news,
@@ -19,10 +20,10 @@ class NewsCard extends StatelessWidget {
     this.onRemove,
   });
   final Map<String, dynamic> news, channel;
+  @override
   final bool fa;
   final String assessment;
   final VoidCallback? onOpenChannel, onRemove;
-  String t(String f, String e) => fa ? f : e;
 
   @override
   Widget build(BuildContext context) {

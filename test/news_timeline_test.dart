@@ -3,8 +3,10 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:persian_trend/core/jalali.dart';
 import 'package:persian_trend/core/news_timeline.dart';
 import 'package:persian_trend/ui/channel_views.dart';
+import 'package:persian_trend/ui/date_format.dart';
 
 Map<String, dynamic> post(String id, String writer, int seq, int time) => {
   'id': id,
@@ -51,55 +53,72 @@ void main() {
   );
 
   for (final fa in [false, true]) {
-    testWidgets(
-      'local timezone, send/receive labels and unknown receipt: $fa',
-      (tester) async {
-        final news = {
-          ...post('example', 'a', 1, 1770000000000),
-          'receivedAtWallMs': 1770000065000,
-          'receivedVia': 'overlay',
-        };
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: NewsTimes(news: news, fa: fa),
-            ),
+    testWidgets('local timezone, send/receive labels and unknown receipt: $fa', (
+      tester,
+    ) async {
+      final news = {
+        ...post('example', 'a', 1, 1770000000000),
+        'receivedAtWallMs': 1770000065000,
+        'receivedVia': 'overlay',
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NewsTimes(news: news, fa: fa),
           ),
-        );
-        Text label(String key) =>
-            tester.widget<Text>(find.byKey(ValueKey('$key-example')));
-        expect(label('sent-time').data, startsWith(fa ? 'ارسال:' : 'Sent:'));
-        expect(
-          label('received-time').data,
-          startsWith(fa ? 'دریافت در این گوشی:' : 'Received on this phone:'),
-        );
-        expect(label('sent-time').data, contains('UTC'));
-        expect(label('sent-time').data, isNot(label('received-time').data));
-        news.remove('receivedAtWallMs');
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: NewsTimes(news: news, fa: fa),
-            ),
+        ),
+      );
+      Text label(String key) =>
+          tester.widget<Text>(find.byKey(ValueKey('$key-example')));
+      expect(label('sent-time').data, startsWith(fa ? 'ارسال:' : 'Sent:'));
+      expect(
+        label('received-time').data,
+        startsWith(fa ? 'دریافت در این گوشی:' : 'Received on this phone:'),
+      );
+      expect(label('sent-time').data, contains('UTC'));
+      expect(label('sent-time').data, isNot(label('received-time').data));
+      // English keeps the Gregorian stamp; Farsi renders a Jalali date with
+      // Persian month names and digits, and isolates the offset run.
+      expect(
+        label('sent-time').data,
+        fa
+            ? allOf(
+                contains(
+                  RegExp(
+                    '^ارسال: [۰-۹]{1,2} (${JalaliDate.monthNamesFa.join('|')}) '
+                    '[۰-۹]{4} [۰-۹]{2}:[۰-۹]{2}:[۰-۹]{2} '
+                    '${ltrIsolateStart}UTC[+-][۰-۹]{2}:[۰-۹]{2}$ltrIsolateEnd\$',
+                  ),
+                ),
+                isNot(contains(RegExp('[0-9]'))),
+              )
+            : matches(
+                RegExp(
+                  r'^Sent: \d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} UTC[+-]\d{2}:\d{2}$',
+                ),
+              ),
+      );
+      news.remove('receivedAtWallMs');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NewsTimes(news: news, fa: fa),
           ),
-        );
-        expect(
-          label('received-time').data,
-          contains(fa ? 'ثبت نشده' : 'Unavailable'),
-        );
-        news['receivedVia'] = 'local';
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: NewsTimes(news: news, fa: fa),
-            ),
+        ),
+      );
+      expect(
+        label('received-time').data,
+        contains(fa ? 'ثبت نشده' : 'Unavailable'),
+      );
+      news['receivedVia'] = 'local';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NewsTimes(news: news, fa: fa),
           ),
-        );
-        expect(
-          find.byKey(const ValueKey('received-time-example')),
-          findsNothing,
-        );
-      },
-    );
+        ),
+      );
+      expect(find.byKey(const ValueKey('received-time-example')), findsNothing);
+    });
   }
 }

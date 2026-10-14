@@ -98,6 +98,18 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sent-time-article')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.textContaining('UTC'), findsOneWidget);
+      // The full stamp is Jalali with Persian digits in Farsi and the
+      // unchanged Gregorian text in English; the clock is this phone's zone.
+      final tooltip = tester.widget<Text>(find.textContaining('UTC'));
+      expect(
+        tooltip.data ?? tooltip.textSpan?.toPlainText(),
+        fa
+            ? allOf(
+                contains('۲۱ مهر ۱۴۰۵ ۱۱:۳۸:۰۶'),
+                isNot(contains(RegExp('[0-9]'))),
+              )
+            : startsWith('2026/10/13 11:38:06 UTC'),
+      );
       expect(tester.takeException(), isNull);
     });
   }

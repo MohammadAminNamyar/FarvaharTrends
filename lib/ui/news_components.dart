@@ -2,26 +2,26 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'date_format.dart';
+
 const _ink = Color(0xFF183F51);
 const _muted = Color(0xFF5A717C);
 
-String channelActivityTime(BuildContext context, dynamic value, bool fa) {
+/// Day-relative label for a signed send time in the channel/feed header.
+/// `now` is injectable for tests; it is the viewer's clock, never a measure.
+String channelActivityTime(
+  BuildContext context,
+  dynamic value,
+  bool fa, {
+  DateTime? now,
+}) {
   if (value is! int || value.abs() > 8640000000000000) return '';
   final date = DateTime.fromMillisecondsSinceEpoch(value).toLocal();
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final day = DateTime(date.year, date.month, date.day);
-  final text = day == today
-      ? '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}'
-      : day == DateTime(today.year, today.month, today.day - 1)
-      ? (fa ? 'دیروز' : 'Yesterday')
-      : MaterialLocalizations.of(context).formatShortDate(date);
-  return fa
-      ? text.replaceAllMapped(
-          RegExp('[0-9]'),
-          (m) => '۰۱۲۳۴۵۶۷۸۹'[int.parse(m[0]!)],
-        )
-      : text;
+  return NewsDateFormat(fa: fa).relativeDay(
+    date,
+    now: now ?? DateTime.now(),
+    shortDate: MaterialLocalizations.of(context).formatShortDate,
+  );
 }
 
 class ChannelAvatar extends StatelessWidget {
@@ -116,42 +116,9 @@ class NewsTimes extends StatelessWidget {
   final bool fa;
   final bool compact;
 
-  String _digits(String text) => fa
-      ? text.replaceAllMapped(
-          RegExp('[0-9]'),
-          (m) => '۰۱۲۳۴۵۶۷۸۹'[int.parse(m[0]!)],
-        )
-      : text;
-
-  String _stamp(dynamic value) {
-    if (value is! int || value < 0 || value > 253402300799999) {
-      return fa ? 'ثبت نشده' : 'Unavailable';
-    }
-    final date = DateTime.fromMillisecondsSinceEpoch(
-      value,
-      isUtc: true,
-    ).toLocal();
-    final zone = date.timeZoneOffset;
-    String two(int n) => n.toString().padLeft(2, '0');
-    return _digits(
-      '${date.year}/${two(date.month)}/${two(date.day)} '
-      '${two(date.hour)}:${two(date.minute)}:${two(date.second)} '
-      'UTC${zone.isNegative ? '-' : '+'}${two(zone.inMinutes.abs() ~/ 60)}:'
-      '${two(zone.inMinutes.abs() % 60)}',
-    );
-  }
-
-  String _clock(dynamic value) {
-    if (value is! int || value < 0 || value > 253402300799999) {
-      return fa ? 'ثبت نشده' : 'Unavailable';
-    }
-    final date = DateTime.fromMillisecondsSinceEpoch(
-      value,
-      isUtc: true,
-    ).toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return _digits('${two(date.hour)}:${two(date.minute)}:${two(date.second)}');
-  }
+  NewsDateFormat get _format => NewsDateFormat(fa: fa);
+  String _stamp(dynamic value) => _format.full(value);
+  String _clock(dynamic value) => _format.clock(value);
 
   Widget _compactTime(String label, dynamic value, String key) => Wrap(
     crossAxisAlignment: WrapCrossAlignment.center,

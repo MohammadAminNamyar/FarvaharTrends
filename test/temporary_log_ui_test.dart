@@ -137,6 +137,19 @@ void main() {
             ),
             findsOneWidget,
           );
+          // Event times are this phone's wall clock: Jalali with Persian
+          // digits in Farsi, the unchanged Gregorian text in English.
+          final eventTime = tester.widget<Text>(
+            find.byKey(const ValueKey('temporary-log-time-0')),
+          );
+          expect(
+            eventTime.data,
+            fa ? '۲۱ مهر ۱۴۰۵ · ۱۱:۳۸:۱۰' : '2026/10/13 · 11:38:10',
+          );
+          expect(
+            eventTime.textDirection,
+            fa ? TextDirection.rtl : TextDirection.ltr,
+          );
           expect(tester.takeException(), isNull);
           if (scale == 1) {
             tester.state<ScrollableState>(list).position.jumpTo(0);

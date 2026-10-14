@@ -3,25 +3,20 @@ import 'package:flutter/services.dart';
 
 import '../app_controller.dart';
 import '../core/peer_activity.dart';
+import 'date_format.dart';
+import 'localization.dart';
 
 const _ink = Color(0xFF183F51);
 const _muted = Color(0xFF5A717C);
 const _teal = Color(0xFF267E7B);
 const _line = Color(0xFFDFE9EC);
 
-class TemporaryLogView extends StatelessWidget {
+class TemporaryLogView extends StatelessWidget with Localized {
   const TemporaryLogView({super.key, required this.app});
   final AppController app;
-  bool get fa => app.languageCode != 'en';
-  String t(String farsi, String english) => fa ? farsi : english;
-  String digits(Object value) {
-    final text = '$value';
-    if (!fa) return text;
-    return text.replaceAllMapped(
-      RegExp(r'[0-9]'),
-      (m) => '۰۱۲۳۴۵۶۷۸۹'[int.parse(m[0]!)],
-    );
-  }
+  @override
+  bool get fa => isFarsiLanguage(app.languageCode);
+  String digits(Object value) => n(value);
 
   String route(dynamic value) => switch (value) {
     'overlay' => t('شبکهٔ همتاها', 'Peer network'),
@@ -361,11 +356,8 @@ class TemporaryLogView extends StatelessWidget {
       'disconnected' => Icons.link_off_rounded,
       _ => Icons.mark_email_read_outlined,
     };
-    final at = DateTime.fromMillisecondsSinceEpoch(row['atWallMs'] as int)
-        .toLocal();
-    String pad(int value) => '$value'.padLeft(2, '0');
-    final time =
-        '${at.year}/${pad(at.month)}/${pad(at.day)} · ${pad(at.hour)}:${pad(at.minute)}:${pad(at.second)}';
+    // Local wall time of this phone's own observation; never a signed value.
+    final time = NewsDateFormat(fa: fa).dateAndTime(row['atWallMs']);
     return _panel(
       child: Row(
         key: ValueKey('temporary-log-event-$index'),
@@ -418,8 +410,9 @@ class TemporaryLogView extends StatelessWidget {
                 Tooltip(
                   message: t('زمان محلی همین گوشی', 'Local time on this phone'),
                   child: Text(
-                    digits(time),
-                    textDirection: TextDirection.ltr,
+                    time,
+                    key: ValueKey('temporary-log-time-$index'),
+                    textDirection: fa ? TextDirection.rtl : TextDirection.ltr,
                     style: const TextStyle(color: _muted, fontSize: 10.5),
                   ),
                 ),
