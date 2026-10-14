@@ -436,12 +436,15 @@ void serviceMain(ServiceInstance service) async {
       if (!cacheOnlyTest) {
         overlay = InternetOverlay(
           engine,
-          // Phones are ephemeral DHT clients: they never answer routing
-          // queries from strangers. Operator-supplied domestic DHT nodes from
-          // the bootstrap document are tried before the hyperdht defaults.
+          // An announcing phone is already visible on the discovery topic, so
+          // it also serves as a DHT routing node: other phones can cache it as
+          // a domestic entry point for later cold starts. A reader-only phone
+          // stays an ephemeral client and answers no routing queries.
+          // Operator-supplied numeric DHT nodes from the bootstrap document
+          // are tried before the hyperdht defaults.
           announce: receivingPolicy.internetAnnounce,
           dhtBootstrap: bootstrap.dhtBootstrap,
-          dhtEphemeral: true,
+          dhtEphemeral: !receivingPolicy.internetAnnounce,
           networkKey: () async {
             final state = await readDeviceState();
             return state['stateUnavailable'] == true
