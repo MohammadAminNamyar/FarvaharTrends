@@ -46,6 +46,7 @@ Map<String, dynamic> connectionReport({
     'network_changed',
     'worklet_start_failed',
     'worklet_unresponsive',
+    'discovery_stalled',
   });
   return {
     'reportVersion': 1,
@@ -95,6 +96,8 @@ Map<String, dynamic> connectionReport({
         if (count(overlay[field], 256) case final int value) field: value,
       if (count(overlay['discoveryRefreshes'], 1000000) case final int value)
         'discoveryRefreshes': value,
+      if (count(overlay['recoveryAttempts'], 3) case final int value)
+        'recoveryAttempts': value,
     },
   };
 }

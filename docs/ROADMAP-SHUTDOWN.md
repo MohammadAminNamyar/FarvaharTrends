@@ -1,6 +1,6 @@
 # Shutdown resilience and security status
 
-Updated for 0.8.7. This is an implementation status, not an independent security audit or evidence of nationwide delivery. See SHUTDOWN-DISCOVERY-TESTS.md for the earlier isolated-network experiments.
+Updated for 0.8.8. This is an implementation status, not an independent security audit or evidence of nationwide delivery. See SHUTDOWN-DISCOVERY-TESTS.md for the earlier isolated-network experiments and READINESS-PLAN.md for all six active workstreams.
 
 ## Finding peers without international infrastructure
 
@@ -14,6 +14,8 @@ This does not create a route where none exists. A fresh phone needs at least one
 
 Still needed: Iranian cross-provider field measurements; UDP-blocked real mobile networks; cold-start trials with nearby introductions; cached-address churn; QR scanning; overnight operation and realistic helper proportions. Loopback isolation tests demonstrate application behavior, not carrier reachability.
 
+From 0.8.8, a newly authenticated overlay peer is registered for persistent retrying in the same session rather than only after app restart. Retry intent is bounded by the eight-peer authenticated cache, respects cooldown and is removed on eviction. An answering but isolated worklet receives a bounded restart opportunity: 90 seconds with remembered peers, 180 seconds without them, then backoff to 15 minutes during continued isolation. A live pinned application link must stay healthy for 90 seconds to reset the backoff. No-network samples suppress these isolation restarts. The tests exercise real HyperDHT reconnection after the starting node and topic discovery are removed; this remains local-loopback evidence.
+
 ## Android receiving and restart
 
 A visible connected-device foreground service supports active receiving. Restart after process death or reboot is opt-in. From 0.8.7, a shared native policy checks saved consent before starting Dart; a null/system intent cannot clear a saved Stop. Stop and restart settings are committed before acknowledgement, and teardown cannot overwrite a newer session. The boot receiver is not exported to other apps and accepts only protected boot/package-update broadcasts. Startup refusal releases the service-owned wake lock and stops the service. Notification content intents are immutable.
@@ -25,6 +27,8 @@ References: https://developer.android.com/develop/background-work/services/fgs/s
 ## Hostile peers and identity protection
 
 The app retains separate publisher and connection identities, pinned TLS 1.3 links, signed channel content and editor revocation, local follow/hide/trust choices, bounded frames/queues/storage, global and per-peer work limits, and authenticated single-use loopback hand-offs. The new referral limits reduce amplification and contact-pool exhaustion. They do not defeat an attacker controlling many independent addresses and identities, nor an attacker who occupies every available contact at first launch.
+
+Reader and publisher stores also share a bounded per-isolate queue before acquiring the native cross-engine identity lease. Concurrent stores cannot bypass ownership checks or fail merely because another operation in the same engine currently owns that lease.
 
 LAN and Wi-Fi Direct discovery use rotating session tokens. This must not be generalized to all protocols: the TCP enrollment path still introduces a connection certificate before mutual TLS. Public news is public; link encryption prevents undetected modification but does not hide connection IPs or traffic timing. Publishing, forwarding, and reading are not anonymous. Tor, mix-network anonymity, and protection against a global observer have not been implemented.
 

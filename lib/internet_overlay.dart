@@ -9,6 +9,7 @@ import 'core/loopback_preface.dart';
 import 'core/overlay_frames.dart';
 import 'core/peer_engine.dart';
 import 'core/network_epoch.dart';
+import 'core/overlay_recovery.dart';
 
 /// Hyperswarm discovers connection identities, then carries the existing TLS
 /// protocol. A discovered peer gains no publisher trust or subscriptions.
@@ -40,6 +41,10 @@ class InternetOverlay {
   final bool publicBootstrap;
   int _candidateOffset = 0;
   final NetworkEpoch _networkEpoch = NetworkEpoch();
+  final Stopwatch _recoveryClock = Stopwatch()..start();
+  late final OverlayRecovery _recovery = OverlayRecovery(
+    nowMs: () => _recoveryClock.elapsedMilliseconds,
+  );
   Future<void>? _stopping;
   static const namespace = String.fromEnvironment(
     'FARVAHARTRENDS_DISCOVERY_NAMESPACE',
@@ -156,6 +161,7 @@ class InternetOverlay {
       final key = await networkKey?.call();
       if (!_current(generation)) return;
       if (_networkEpoch.observe(key)) {
+        _recovery.networkChanged();
         onState({'state': 'retrying', 'error': 'network_changed'});
         // The old UDP sockets can remain bound to a vanished interface. Reopen
         // the worklet after a short debounce; keys/cache/news remain intact.
@@ -184,6 +190,26 @@ class InternetOverlay {
       }
       final network = await _pear?.networkState();
       if (!_current(generation)) return;
+      final connected = _routes.values.any(
+        (route) =>
+            route.peerId != null &&
+            engine.hasPinnedRoute(
+              route.peerId!,
+              route.routeId,
+              PeerTransport.overlay,
+            ),
+      );
+      if (network != null &&
+          _recovery.shouldRestart(
+            connected: connected,
+            offline: key == 'none',
+            rememberedPeers: (network['cachedPeerCount'] as int? ?? 0) > 0,
+          )) {
+        onState({'state': 'retrying', 'error': 'discovery_stalled'});
+        await _stopResources();
+        _scheduleRestart(after: const Duration(seconds: 2));
+        return;
+      }
       if (network != null) {
         final own = network['ownContact'];
         await engine.publishDiscoveryEndpoint(
@@ -209,9 +235,8 @@ class InternetOverlay {
       _refreshFailures = 0;
       if (_running && network != null) {
         onState({
-          'state': _routes.values.any((route) => route.remembered)
-              ? 'connected'
-              : 'discovering',
+          'state': connected ? 'connected' : 'discovering',
+          'recoveryAttempts': _recovery.attempts,
           'discoveryStage': network['discoveryStage'],
           'dhtOnline': network['dhtOnline'],
           'dhtFirewalled': network['dhtFirewalled'],

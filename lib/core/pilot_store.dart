@@ -57,6 +57,9 @@ class PilotStore {
   }
 
   static const maxBulletins = 256;
+  // Followed/managed feeds receive retention priority, while other public
+  // sources can still use this portion of the cache for store-and-forward.
+  static const publicRelayReserve = 64;
   static const maxReceipts = 2048;
   static const maxEvents = 800;
   static const maxPublications = 256;
@@ -1046,19 +1049,39 @@ class PilotStore {
     String counter,
   ) {
     while (map.length > limit) {
-      // Keep the local author's recent outbox within its existing publisher
-      // quota. Public foreign cache churn must not erase locally written news.
-      final id = counter == 'bulletins' && localOwnerId != null
-          ? map.keys.firstWhere(
-              (id) =>
-                  _bulletinPublishers[id] != localOwnerId &&
-                  !publications.containsKey(id),
-              orElse: () => map.keys.first,
-            )
+      final id = counter == 'bulletins'
+          ? _bulletinEvictionCandidate(map.keys)
           : map.keys.first;
       map.remove(id);
       evictions[counter] = evictions[counter]! + 1;
     }
+  }
+
+  String _bulletinEvictionCandidate(Iterable<String> ids) {
+    bool own(String id) =>
+        (localOwnerId != null && _bulletinPublishers[id] == localOwnerId) ||
+        publications.containsKey(id);
+    bool followed(String id) {
+      final channel = _bulletinChannels[id];
+      return channel != null && _protected(channel);
+    }
+
+    final foreign = ids.where((id) => !own(id)).toList();
+    if (foreign.isEmpty) return ids.first;
+    final public = foreign.where((id) => !followed(id)).toList();
+    if (public.length > publicRelayReserve) return public.first;
+    // At the shared capacity, evict from the largest followed feed first so
+    // a busy followed source cannot immediately erase a quieter one. Private
+    // retention hints are never added to news envelopes or the public journal.
+    final groups = <String, List<String>>{};
+    for (final id in foreign.where(followed)) {
+      (groups[_bulletinChannels[id]!] ??= []).add(id);
+    }
+    List<String>? largest;
+    for (final group in groups.values) {
+      if (largest == null || group.length > largest.length) largest = group;
+    }
+    return largest?.first ?? foreign.first;
   }
 
   Future<void> _compact() async {

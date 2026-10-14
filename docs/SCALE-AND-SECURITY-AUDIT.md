@@ -82,6 +82,7 @@ monotonic observation bounds are reported separately, with sampling/UI costs.
 | News text / signed envelope | 1,024 UTF-8 bytes / 16 KiB |
 | Public metadata | 128 channels, 16 per publisher; private managed channel keys protected separately |
 | Cached news | 256 overall, 64 per channel, 96 per signing publisher |
+| Followed-feed retention (0.8.8) | Private followed/managed sources get retention priority; 64 public relay slots remain available subject to local-outbox priority; largest followed feeds yield first at shared capacity |
 | Outbox / diagnostic receipts / events | 256 / 2,048 / 800 rows, with additional diagnostic byte trimming at compaction |
 | Reader state | 2,048 read and 2,048 seen IDs, 128 muted channels; currently cached IDs protected during observation |
 | Channel key vault | 1 MiB serialized limit; 32 entries, 8 pending requests; new active managed channels limited to 16 |

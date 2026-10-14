@@ -7,16 +7,51 @@ class PilotPlatform {
   static final _transportEvents =
       StreamController<Map<String, dynamic>>.broadcast();
   static bool _listening = false;
+  // One native lease per Flutter engine. Reader updates and publisher-key
+  // operations can overlap within that engine, so serialize them here before
+  // entering the process-wide native queue shared with the other engine.
+  static Future<void> _identityTail = Future<void>.value();
+  static int _identityRequests = 0;
+  static String? _identityToken;
+  static Completer<void>? _identityReleased;
   static Future<String> acquireIdentityLease() async {
-    final token = await _channel.invokeMethod<String>('acquireIdentityLease');
-    if (token == null || token.isEmpty) {
-      throw StateError('Identity storage could not be locked.');
+    if (_identityRequests >= 16) {
+      throw StateError('Identity storage request queue is full.');
     }
-    return token;
+    _identityRequests++;
+    final previous = _identityTail;
+    final released = Completer<void>();
+    _identityTail = released.future;
+    await previous;
+    try {
+      final token = await _channel.invokeMethod<String>('acquireIdentityLease');
+      if (token == null || token.isEmpty) {
+        throw StateError('Identity storage could not be locked.');
+      }
+      _identityToken = token;
+      _identityReleased = released;
+      return token;
+    } catch (_) {
+      _identityRequests--;
+      released.complete();
+      rethrow;
+    }
   }
 
-  static Future<void> releaseIdentityLease(String token) =>
-      _channel.invokeMethod('releaseIdentityLease', {'token': token});
+  static Future<void> releaseIdentityLease(String token) async {
+    if (_identityToken != token || _identityReleased == null) {
+      throw StateError('Identity storage lease is not owned.');
+    }
+    final released = _identityReleased!;
+    _identityToken = null;
+    _identityReleased = null;
+    try {
+      await _channel.invokeMethod('releaseIdentityLease', {'token': token});
+    } finally {
+      _identityRequests--;
+      released.complete();
+    }
+  }
 
   /// A short-lived lease on the active Wi-Fi gateway, when supported.
   static Future<Map<String, dynamic>> refreshPhoneHelper(int port) async =>
