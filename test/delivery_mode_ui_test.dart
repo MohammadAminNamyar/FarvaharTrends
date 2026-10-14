@@ -359,6 +359,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('A recovery notice can be dismissed and does not return', (
+    tester,
+  ) async {
+    final app = await showApp(tester, language: 'en');
+    app.error = 'The imported starting-peer list could not be read.';
+    app.errorIsNotice = true;
+    app.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-error-note')), findsOneWidget);
+    expect(find.text('Notice'), findsOneWidget);
+    expect(find.text('That action did not finish'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('dismiss-note')));
+    await tester.pumpAndSettle();
+    expect(app.error, isNull);
+    expect(find.byKey(const ValueKey('reader-error-note')), findsNothing);
+    // A refresh-style notification must not bring the banner back.
+    app.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-error-note')), findsNothing);
+    // A real failure still uses the failure title and is dismissible too.
+    app.error = 'Could not save.';
+    app.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(find.text('That action did not finish'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('dismiss-note')));
+    await tester.pumpAndSettle();
+    expect(app.error, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('English announce copy does not promise anonymity', (
     tester,
   ) async {

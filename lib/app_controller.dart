@@ -537,20 +537,43 @@ class AppController extends ChangeNotifier {
     error = userError(exception, code: code).text(languageCode);
   }
 
+  /// Recovery warnings are shown once per process. The underlying stores keep
+  /// reporting the quarantine until their next successful write, so without
+  /// this guard every reader refresh would re-raise the same banner.
+  final Set<String> _surfacedRecoveryWarnings = {};
+
   void _surfaceRecoveryWarnings() {
     final codes = [
       if (_channelPreferences?.recoveryWarning != null) 'channel_recovery',
       if (_readerRecoveryWarningPending || _reader?.recoveryWarning != null)
         'reader_recovery',
-    ];
+      if (_bootstrapRecoveryWarning) 'bootstrap_recovery',
+    ].where(_surfacedRecoveryWarnings.add).toList();
+    _readerRecoveryWarningPending = false;
+    if (codes.isEmpty) return;
     final messages = [
-      for (final code in codes) userError('', code: code).text(languageCode),
-      if (_bootstrapRecoveryWarning)
-        languageCode == 'fa'
-            ? 'فهرست همتاهای شروع واردشده قابل خواندن نبود و کنار گذاشته شد. همتاهای داخلی برنامه همچنان استفاده می‌شوند.'
-            : 'The imported starting-peer list could not be read and was set aside. Built-in starting peers are still used.',
+      for (final code in codes)
+        if (code == 'bootstrap_recovery')
+          languageCode == 'fa'
+              ? 'فهرست همتاهای شروع واردشده قابل خواندن نبود و کنار گذاشته شد. همتاهای داخلی برنامه همچنان استفاده می‌شوند.'
+              : 'The imported starting-peer list could not be read and was set aside. Built-in starting peers are still used.'
+        else
+          userError('', code: code).text(languageCode),
     ];
-    if (messages.isNotEmpty) error = messages.join('\n');
+    error = messages.join('\n');
+    errorIsNotice = true;
+  }
+
+  /// True while [error] holds an informational recovery notice rather than a
+  /// failed action, so the UI can title and style it accordingly.
+  bool errorIsNotice = false;
+
+  /// Hides the current error or notice banner until something new happens.
+  void dismissError() {
+    if (error == null) return;
+    error = null;
+    errorIsNotice = false;
+    notifyListeners();
   }
 
   String label = 'Test phone';
@@ -967,6 +990,7 @@ class AppController extends ChangeNotifier {
     if (busy || loading) return;
     busy = true;
     error = null;
+    errorIsNotice = false;
     notifyListeners();
     try {
       await action();

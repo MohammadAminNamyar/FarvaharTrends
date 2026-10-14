@@ -608,11 +608,30 @@ void main() {
       await app.loadBootstrapConfiguration();
       expect(app.bootstrapConfig.isEmpty, isTrue);
       expect(app.error, contains('همتاهای شروع'));
+      expect(app.errorIsNotice, isTrue);
       expect(
         await File('${directory.path}/bootstrap-imported.json.corrupt')
             .exists(),
         isTrue,
       );
+    });
+
+    test('a recovery notice is shown once and stays dismissed', () async {
+      await File('${directory.path}/bootstrap-imported.json')
+          .writeAsString('{broken');
+      final app = controller(_Engine(directory, identity));
+      addTearDown(app.dispose);
+      await app.loadBootstrapConfiguration();
+      expect(app.error, isNotNull);
+      app.dismissError();
+      expect(app.error, isNull);
+      expect(app.errorIsNotice, isFalse);
+      // Later refreshes keep reporting the quarantine, but the banner must
+      // not come back on its own.
+      await app.loadBootstrapConfiguration();
+      expect(app.error, isNull);
+      app.dismissError();
+      expect(app.error, isNull);
     });
   });
 }

@@ -331,10 +331,29 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
             if (savingTrust) const LinearProgressIndicator(minHeight: 2),
             if (trustError != null || app.error != null)
               Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  trustError ?? app.error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        trustError ?? app.error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('dismiss-channel-error'),
+                      tooltip: t('بستن', 'Dismiss'),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        setState(() => trustError = null);
+                        app.dismissError();
+                      },
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+                  ],
                 ),
               ),
             Expanded(

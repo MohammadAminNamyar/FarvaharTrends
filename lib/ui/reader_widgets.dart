@@ -119,9 +119,20 @@ class ReaderEmpty extends StatelessWidget {
 
 /// Teal-tinted callout with an icon, title and body.
 class ReaderNote extends StatelessWidget {
-  const ReaderNote(this.icon, this.title, this.body, {super.key});
+  const ReaderNote(
+    this.icon,
+    this.title,
+    this.body, {
+    super.key,
+    this.onDismiss,
+    this.dismissLabel,
+  });
   final IconData icon;
   final String title, body;
+
+  /// When set, a close button hides the note; [dismissLabel] is its tooltip.
+  final VoidCallback? onDismiss;
+  final String? dismissLabel;
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(17),
@@ -160,6 +171,16 @@ class ReaderNote extends StatelessWidget {
             ],
           ),
         ),
+        if (onDismiss != null)
+          IconButton(
+            key: const ValueKey('dismiss-note'),
+            tooltip: dismissLabel,
+            onPressed: onDismiss,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            icon: const Icon(Icons.close_rounded, color: mutedColor, size: 18),
+          ),
       ],
     ),
   );

@@ -227,9 +227,19 @@ class _ReaderState extends State<ReaderHome>
                         Padding(
                           padding: const EdgeInsets.only(bottom: 15),
                           child: ReaderNote(
-                            Icons.error_outline_rounded,
-                            t('این کار کامل نشد', 'That action did not finish'),
+                            app.errorIsNotice
+                                ? Icons.info_outline_rounded
+                                : Icons.error_outline_rounded,
+                            app.errorIsNotice
+                                ? t('توجه', 'Notice')
+                                : t(
+                                    'این کار کامل نشد',
+                                    'That action did not finish',
+                                  ),
                             app.error!,
+                            key: const ValueKey('reader-error-note'),
+                            onDismiss: app.dismissError,
+                            dismissLabel: t('بستن', 'Dismiss'),
                           ),
                         ),
                       ...switch (tab) {
