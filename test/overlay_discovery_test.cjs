@@ -2,6 +2,12 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { DiscoveryRefresh } = require('../packages/flutter_pear/pear-end/persiantrend-discovery')
+test('production Dart API does not promise an unsupported owner-relay RPC', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(path.join(__dirname, '../packages/flutter_pear/lib/src/pear.dart'), 'utf8')
+  assert.doesNotMatch(source, /setRelayKey|normalizeRelayKey|PearMethod\.relaySet/)
+})
 function clock () {
   let next = 0
   const tasks = new Map()

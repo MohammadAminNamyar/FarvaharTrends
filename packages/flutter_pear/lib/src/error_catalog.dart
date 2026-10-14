@@ -299,13 +299,11 @@ abstract final class PearErrorCatalog {
           're-open via `PearBase.open()` if you need it again.',
     ),
     PearErrorCode.invalidRelayKey: PearErrorCatalogEntry(
-      problem: 'Pear.setRelayKey was given a relay key that is not 12 '
+      problem: 'The legacy upstream relay command received a key that is not 12 '
           'digits.',
       cause: 'A typo, a missing group, or letters or non-ASCII digits in '
           'the key. Spaces and dashes are ignored; nothing else is.',
-      fix: 'Enter the exact 12 digits the relay was set up with, e.g. '
-          '4821-0937-5562. Validate input first with '
-          '`Pear.normalizeRelayKey`.',
+      fix: 'This legacy command is not available in PersianTrend.',
     ),
   };
 }

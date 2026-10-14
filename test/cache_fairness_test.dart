@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:persian_trend/core/channels.dart';
@@ -20,6 +21,89 @@ void main() {
   });
   tearDown(() async {
     if (await scratch.exists()) await scratch.delete(recursive: true);
+  });
+
+  test('128 stranger identities cannot flush a followed channel; active sources outlive quiet ones', () async {
+    final protected = SignedChannel.create(other, name: 'Followed');
+    final hot = SignedChannel.create(other, name: 'Recently active');
+    final cold = SignedChannel.create(other, name: 'Quiet unprotected');
+    final store = PilotStore(
+      scratch,
+      localOwnerId: publisher.id,
+      protectedChannelIds: {protected.id},
+    );
+    await store.load();
+    for (final channel in [protected, hot, cold]) {
+      await store.putChannel(channel.toJson());
+    }
+    final protectedNews = SignedBulletin.create(
+      other,
+      runId: 'news',
+      text: 'Retain followed news',
+      sequence: 1,
+      channelId: protected.id,
+    );
+    await store.putBulletin(protectedNews.toJson());
+    final strangers =
+        (jsonDecode(
+              await File('test/fixtures/stranger_channels.json').readAsString(),
+            ) as List)
+            .map(
+              (raw) =>
+                  SignedChannel.fromJson(Map<String, dynamic>.from(raw as Map)),
+            )
+            .toList();
+    expect(strangers.map((channel) => channel.ownerId).toSet(), hasLength(128));
+    for (var i = 0; i < strangers.length; i++) {
+      if (i == 125) {
+        await store.putBulletin(
+          SignedBulletin.create(
+            other,
+            runId: 'news',
+            text: 'Local arrival refreshes activity',
+            sequence: 1,
+            channelId: hot.id,
+          ).toJson(),
+        );
+      }
+      await store.putChannel(strangers[i].toJson());
+    }
+    expect(store.channels.length, PilotStore.maxChannels);
+    expect(store.channels.containsKey(protected.id), true);
+    expect(store.bulletins.containsKey(protectedNews.id), true);
+    expect(store.channels.containsKey(hot.id), true);
+    expect(store.channels.containsKey(cold.id), false);
+    final reopened = PilotStore(
+      scratch,
+      localOwnerId: publisher.id,
+      protectedChannelIds: {protected.id},
+    );
+    await reopened.load();
+    expect(reopened.channels.containsKey(protected.id), true);
+    expect(reopened.channels.keys.last, store.channels.keys.last);
+    final journal = await File('${scratch.path}/pilot.jsonl').readAsString();
+    expect(journal, isNot(contains('protectedChannelIds')));
+    expect(journal, isNot(contains('followed')));
+  }, timeout: const Timeout(Duration(minutes: 5)));
+
+  test('publisher quota also protects followed and managed channels', () async {
+    final store = PilotStore(scratch, localOwnerId: publisher.id);
+    await store.load();
+    final channels = [
+      for (var i = 0; i < 16; i++)
+        SignedChannel.create(other, name: 'Foreign $i'),
+    ];
+    for (final channel in channels) {
+      await store.putChannel(channel.toJson());
+    }
+    store.setProtectedChannelIds({channels.first.id});
+    store.managedChannelIds.add(channels[1].id);
+    await store.putChannel(
+      SignedChannel.create(other, name: 'Replacement').toJson(),
+    );
+    expect(store.channels.containsKey(channels.first.id), true);
+    expect(store.channels.containsKey(channels[1].id), true);
+    expect(store.channels.containsKey(channels[2].id), false);
   });
 
   test('one noisy channel retains its newest bounded news without removing another source', () async {

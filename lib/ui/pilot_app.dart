@@ -1359,7 +1359,8 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                   }
                   Navigator.pop(dialogContext, card);
                 } catch (ex) {
-                  update(() => error = ex.toString());
+                  app.recordFailure(ex);
+                  update(() => error = app.error);
                 }
               },
               child: const _Localized('Review identity'),
@@ -1521,7 +1522,8 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                     parsedPort,
                   ));
                 } catch (ex) {
-                  update(() => error = ex.toString());
+                  app.recordFailure(ex);
+                  update(() => error = app.error);
                 }
               },
               child: const _Localized('Save address'),

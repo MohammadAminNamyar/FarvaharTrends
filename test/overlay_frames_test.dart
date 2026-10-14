@@ -4,6 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:persian_trend/core/overlay_frames.dart';
 
 void main() {
+  test('many coalesced small records decode within a bounded time', () {
+    final frame = OverlayFrame.encode(OverlayFrame.data, [42]);
+    final chunk = Uint8List.fromList([for (var i = 0; i < 30000; i++) ...frame]);
+    final clock = Stopwatch()..start();
+    final frames = OverlayFrameDecoder().add(chunk);
+    clock.stop();
+    expect(frames, hasLength(30000));
+    expect(frames.every((f) => f.bytes.single == 42), true);
+    expect(clock.elapsed, lessThan(const Duration(seconds: 2)));
+  });
   test('Fragmented and coalesced records preserve exact bytes', () {
     final bytes = [
       ...OverlayFrame.encode(OverlayFrame.hello, [1, 2]),

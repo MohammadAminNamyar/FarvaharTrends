@@ -14,11 +14,16 @@ class ChannelCapacityException extends StateError {
 
 /// App-private bounded journal. A successful write is flushed before callers ACK.
 class PilotStore {
-  PilotStore(this.directory, {this.localOwnerId}) {
+  PilotStore(
+    this.directory, {
+    this.localOwnerId,
+    Iterable<String> protectedChannelIds = const [],
+  }) {
     if (localOwnerId != null &&
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(localOwnerId!)) {
       throw ArgumentError('Expected a local owner fingerprint.');
     }
+    setProtectedChannelIds(protectedChannelIds);
   }
   final Directory directory;
 
@@ -26,6 +31,31 @@ class PilotStore {
   /// ownership retains the conservative legacy policy of rejecting at capacity.
   final String? localOwnerId;
   final Set<String> managedChannelIds = {};
+  // Opaque local retention hints. Never journaled, exported or sent to peers.
+  final Set<String> _protectedChannelIds = {};
+  void setProtectedChannelIds(Iterable<String> ids) {
+    _protectedChannelIds
+      ..clear()
+      ..addAll(
+        ids
+            .where((id) => RegExp(r'^[a-f0-9]{64}$').hasMatch(id))
+            .take(maxChannels),
+      );
+  }
+
+  bool _protected(String id) =>
+      _protectedChannelIds.contains(id) ||
+      managedChannelIds.contains(id) ||
+      _channelPublishers[id] == localOwnerId;
+
+  // Map order represents local arrival activity, not publisher wall clocks.
+  // Snapshot encoding preserves this order without disclosing follow choices.
+  void _touchChannel(String? id) {
+    if (id == null) return;
+    final value = channels.remove(id);
+    if (value != null) channels[id] = value;
+  }
+
   static const maxBulletins = 256;
   static const maxReceipts = 2048;
   static const maxEvents = 800;
@@ -125,8 +155,8 @@ class PilotStore {
   });
 
   /// Retains immutable ownership metadata in a bounded public relay cache.
-  /// Local channels are protected; foreign metadata rotates independently of
-  /// private channel choices. Rotation never transfers ownership of an ID.
+  /// Owned, managed and locally protected channels survive stranger churn.
+  /// Rotation never transfers ownership of an ID.
   Future<bool> putChannel(Map<String, dynamic> value) => _serial(() async {
     _requireLoaded();
     final channel = SignedChannel.fromJson(value);
@@ -386,6 +416,7 @@ class PilotStore {
             (policy.revision == previous.revision &&
                 policy.id.compareTo(previous.id) < 0)) {
           channelPolicies[channelId] = policy.toJson();
+          _touchChannel(channelId);
           for (final id in bulletins.keys.toList()) {
             if (!bulletins[id]!.containsKey('payloadBase64')) continue;
             final news = SignedBulletin.fromJson(bulletins[id]!);
@@ -405,6 +436,7 @@ class PilotStore {
         _validateStoredBulletin(value);
         bulletins[value['id'] as String] = value;
         _indexBulletin(value);
+        _touchChannel(_bulletinChannels[value['id']]);
         if (record['observation'] is Map) {
           bulletinObservations.putIfAbsent(
             value['id'] as String,
@@ -421,6 +453,7 @@ class PilotStore {
         );
         bulletins[value['id'] as String] = value;
         _indexBulletin(value);
+        _touchChannel(_bulletinChannels[value['id']]);
         publications[value['id'] as String] = metadata;
       case 'receipt':
         final value = _map(record['value']);
@@ -489,9 +522,14 @@ class PilotStore {
     if (record['events'] is! List || !_counter(record['sequence'])) {
       throw const FormatException('Invalid snapshot fields.');
     }
-    final staged = PilotStore(directory, localOwnerId: localOwnerId)
-      .._recovering = _recovering
-      ..managedChannelIds.addAll(managedChannelIds);
+    final staged =
+        PilotStore(
+            directory,
+            localOwnerId: localOwnerId,
+            protectedChannelIds: _protectedChannelIds,
+          )
+          .._recovering = _recovering
+          ..managedChannelIds.addAll(managedChannelIds);
     staged.sequence = record['sequence'] as int;
     final savedEvictions = record['evictions'];
     if (savedEvictions is Map) {
@@ -963,15 +1001,14 @@ class PilotStore {
     final remove = <String>[];
     if (publisherIds.length >= maxChannelsPerPublisher) {
       if (localOwnerId == null || incoming.ownerId == localOwnerId) return null;
-      remove.add(publisherIds.first);
+      final eligible = publisherIds.where((id) => !_protected(id));
+      if (eligible.isEmpty) return null;
+      remove.add(eligible.first);
     }
     if (channels.length - remove.length >= maxChannels) {
       if (localOwnerId == null) return null;
       final oldestForeign = channels.keys.where(
-        (id) =>
-            _channelPublishers[id] != localOwnerId &&
-            !managedChannelIds.contains(id) &&
-            !remove.contains(id),
+        (id) => !_protected(id) && !remove.contains(id),
       );
       if (oldestForeign.isEmpty) return null;
       remove.add(oldestForeign.first);

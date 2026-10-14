@@ -32,26 +32,33 @@ class OverlayFrame {
 }
 
 class OverlayFrameDecoder {
-  List<int> _pending = [];
+  Uint8List _pending = Uint8List(0);
   List<OverlayFrame> add(List<int> bytes) {
     if (_pending.length + bytes.length > 256 * 1024) {
       throw const FormatException('Overlay buffer limit reached.');
     }
-    _pending.addAll(bytes);
+    final buffer = Uint8List(_pending.length + bytes.length)
+      ..setRange(0, _pending.length, _pending)
+      ..setRange(_pending.length, _pending.length + bytes.length, bytes);
+    var offset = 0;
     final result = <OverlayFrame>[];
-    while (_pending.length >= 4) {
-      final header = Uint8List.fromList(_pending.take(4).toList());
-      final length = ByteData.sublistView(header).getUint32(0);
+    final header = ByteData.sublistView(buffer);
+    while (buffer.length - offset >= 4) {
+      final length = header.getUint32(offset);
       if (length < 1 || length > OverlayFrame.maxPayload + 1) {
         throw const FormatException('Invalid overlay record length.');
       }
-      if (_pending.length < length + 4) break;
-      final type = _pending[4];
-      final body = Uint8List.fromList(_pending.sublist(5, length + 4));
+      if (buffer.length - offset < length + 4) break;
+      final type = buffer[offset + 4];
+      final body = Uint8List.fromList(
+        Uint8List.sublistView(buffer, offset + 5, offset + length + 4),
+      );
       OverlayFrame._validate(type, body.length);
       result.add(OverlayFrame(type, body));
-      _pending = _pending.sublist(length + 4);
+      offset += length + 4;
     }
+    // One compaction per input chunk; records never retain the large buffer.
+    _pending = Uint8List.fromList(Uint8List.sublistView(buffer, offset));
     return result;
   }
 }

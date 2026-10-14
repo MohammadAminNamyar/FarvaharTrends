@@ -11,6 +11,7 @@ import 'package:persian_trend/core/identity.dart';
 import 'package:persian_trend/core/delivery_mode.dart';
 import 'package:persian_trend/core/delivery_mode_store.dart';
 import 'package:persian_trend/core/peer_engine.dart';
+import 'package:persian_trend/core/reader_state.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +34,27 @@ void main() {
     directory: directory,
     identity: identity,
     createEngine: () => engine,
+  );
+
+  test(
+    'corrupt reader settings surface a localized safe-default warning',
+    () async {
+      await File('${directory.path}/reader-state.json')
+          .writeAsString('{broken');
+      final reader = ReaderState(directory);
+      await reader.load();
+      final app = AppController.forTesting(
+        directory: directory,
+        identity: identity,
+        reader: reader,
+        createEngine: () => _Engine(directory, identity),
+      );
+      expect(app.error, contains('اعلان‌ها و دریافت تصویر خاموش'));
+      expect(app.newsNotifications, false);
+      expect(app.imageMode, 'never');
+      expect(app.error, isNot(contains('Reading settings')));
+      app.dispose();
+    },
   );
 
   test('Different UI lifetimes never reuse service command IDs', () {

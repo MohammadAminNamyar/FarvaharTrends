@@ -179,6 +179,30 @@ class TemporaryLogView extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (app.localErrorDetails.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ExpansionTile(
+                    title: Text(
+                      t('جزئیات خطا روی این گوشی', 'Local error details'),
+                    ),
+                    subtitle: Text(
+                      t(
+                        'فقط در حافظه؛ خودکار ارسال نمی‌شود.',
+                        'In memory only; never sent automatically.',
+                      ),
+                    ),
+                    children: [
+                      for (final detail in app.localErrorDetails)
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: SelectableText(
+                            detail,
+                            textDirection: TextDirection.ltr,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
               ],
             ),
           );
@@ -264,7 +288,9 @@ class TemporaryLogView extends StatelessWidget {
                     ),
                     TextButton.icon(
                       key: const ValueKey('temporary-log-clear'),
-                      onPressed: rows.isEmpty || app.busy
+                      onPressed:
+                          (rows.isEmpty && app.localErrorDetails.isEmpty) ||
+                              app.busy
                           ? null
                           : () => app.perform(app.clearTemporaryLog),
                       icon: const Icon(Icons.delete_outline_rounded, size: 18),

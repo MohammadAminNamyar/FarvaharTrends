@@ -28,7 +28,7 @@ const Method = {
   ATTACH_INFO: 'attach.info',
   DHT_STATUS: 'dht.status',
   // Sets (p.key, 12 digits) or clears (p.key null) the owner relay -- see
-  // index.js's setRelay and schema.dart's PearMethod.relaySet.
+  // legacy upstream index.js's setRelay (not PersianTrend's worklet).
   RELAY_SET: 'relay.set',
   // File-path bulk seam (E4.4, codex #4 LOCKED): writes p.data (whole
   // payload, base64, NOT chunked/streamed) to a new file in this worklet's

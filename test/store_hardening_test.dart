@@ -430,12 +430,11 @@ void main() {
         'id': ownNews.id,
         'channelId': own.id,
       });
-      final foreign = <SignedChannel>[];
-      for (var i = 0; i < PilotStore.maxChannelsPerPublisher; i++) {
-        final channel = SignedChannel.create(remote, name: 'Foreign $i');
-        foreign.add(channel);
-        await store.putChannel(channel.toJson());
-      }
+      final foreign = <SignedChannel>[
+        for (var i = 0; i < PilotStore.maxChannelsPerPublisher; i++)
+          SignedChannel.create(remote, name: 'Foreign $i'),
+      ];
+      await store.putChannel(foreign.first.toJson());
       final oldNews = SignedBulletin.create(
         remote,
         runId: 'news',
@@ -447,6 +446,10 @@ void main() {
         oldNews.toJson(),
         observation: {'receivedVia': 'bluetooth'},
       );
+      // Later channel arrivals leave the first source least recently active.
+      for (final channel in foreign.skip(1)) {
+        await store.putChannel(channel.toJson());
+      }
       final diagnostic = SignedBulletin.create(
         remote,
         runId: 'explicit-diagnostic',

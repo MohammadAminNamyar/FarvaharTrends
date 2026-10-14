@@ -1,5 +1,35 @@
 # Prototype boundaries and evidence
 
+## Correctness hardening, 13 October 2026
+
+New identities use correctly encoded certificate validity from 2000-01-01 to
+9999-12-31. Both TLS directions require TLS 1.3. Existing certificate fingerprints
+and keys are preserved: older certificates keep their original validity dates.
+These dates prevent common reset-clock failures; they are not a revocation
+mechanism and do not cover clocks set before 2000.
+
+Overlay records decode with an offset cursor and one compaction per input chunk.
+Protocol penalties use a separate, session-local table of at most 64 identities,
+retaining strike history for five minutes and cooldowns through contact eviction.
+An unexpired penalty is not displaced by identity churn. At table saturation,
+new identities still face the existing global handshake and traffic budgets.
+IPv6 addresses within a /64 share the pre-TLS admission budget.
+
+Locally followed, owned and managed channels are protected from channel-metadata
+eviction. Other channels rotate by local accepted bulletin/policy arrival activity,
+not signed wall time. Protection hints are never journaled, exported or gossiped.
+This protects the channel entry from stranger-driven removal; global news/image
+limits still apply and cannot retain an unlimited followed history. Automatic
+LAN-origin contacts may attempt four new channels per minute; other contacts
+retain the eight-channel budget and the global budget remains 32.
+
+The unused owner-relay Dart API was removed because the production worklet did
+not implement it. This change adds no relay service or new reachability path.
+Interface errors use localized codes; raw details are bounded to 20 entries of
+512 characters in the in-memory Temporary log. They are not included in the
+shareable connection report or sent automatically. Corrupt reader settings now
+show a warning that notifications and image downloads were disabled.
+
 ## 0.6.0 automatic discovery and phone forwarding
 
 Receiving, publishing, discovery and forwarding run inside one APK. No separate helper application is needed. All networks adds a pinned Hyperswarm/HyperDHT transport with a single public application namespace. Public DHT bootstrap peers help first discovery and encrypted NAT traversal; this is infrastructure dependence, although there is no required central news backend. Channel names, follow/trust choices and publisher private keys are not discovery topics. Discovery participants can observe connection metadata. The existing pinned mutual TLS, publisher signatures and bounded gossip protocol run over the discovered stream.
@@ -80,13 +110,13 @@ An optional Windows BLE helper lets a physical Android phone reach the local PC 
 
 Following, blocking and trust marks are private local preferences. The main feed shows followed, unblocked channels; other channels are available through Discover. Owned channels are followed unless blocked. Trust defaults to Not assessed; Trusted by you is a personal assessment, not a public vote or factual verification. Trust does not follow a channel; hiding clears both follow and trust. Unblocking someone else's channel does not restore either mark; an owned channel becomes automatically followed again, without restoring trust. These lists are never included in discovery, gossip, peer requests or diagnostic exports. The shared public cache may still carry other channels, so this is not a promise to download only followed content.
 
-Public metadata is limited to 128 channels and 16 per publisher. Local-owned metadata and sequence counters are protected within that limit. Old foreign metadata rotates in insertion order with its dependent cached news, so a full foreign directory cannot permanently prevent local channel creation. The news cache retains at most 256 bulletins, 64 per channel and 96 per publisher. Within a full channel window, the highest signed sequence numbers are retained with deterministic ID tie-breaking; stale replays cannot displace newer items there. Publisher retention uses insertion order. At the global news bound, foreign items are evicted before local-authored news; the local outbox still obeys the per-channel and per-publisher limits. None of these choices consult private follow/trust preferences. There is no permanent replay history or unlimited archive. Sustained multiple-key attacks can still displace foreign public content or compete for automatic contacts.
+Public metadata is limited to 128 channels and 16 per publisher. Local-owned metadata and sequence counters are protected within that limit. Unprotected foreign metadata rotates by local arrival activity with its dependent cached news, so a full foreign directory cannot permanently prevent local channel creation. The news cache retains at most 256 bulletins, 64 per channel and 96 per publisher. Within a full channel window, the highest signed sequence numbers are retained with deterministic ID tie-breaking; stale replays cannot displace newer items there. Publisher retention uses insertion order. At the global news bound, foreign items are evicted before local-authored news; the local outbox still obeys the per-channel and per-publisher limits. Local follow hints protect channel metadata only; bulletin quotas do not consult follow/trust preferences. There is no permanent replay history or unlimited archive. Sustained multiple-key attacks can still displace foreign public content or compete for automatic contacts.
 
 ## Traffic abuse limits
 
 Each device enforces local elapsed-time budgets without broadcasting trust choices or accusations. Current experimental defaults per 60-second window are 1 MiB ingress and 600 frames per peer, 4 MiB/2,400 frames globally, 512 KiB egress per peer and 4 MiB globally, and 512 requested object IDs per peer/2,048 globally. Frames remain capped at 32 KiB. Repeated object responses are suppressed for 10 seconds with a bounded cache; budgets survive reconnects in the same engine session. Excess request/egress work is deferred to later inventory reconciliation, which can add delay under load. Ingress overrun can close a connection; global exhaustion alone does not mark an honest peer abusive.
 
-New channel admissions are limited to 8 attempts per peer and 32 globally per minute; excess metadata can be requested again later on the same TLS connection. Missing-channel news has at most four pending slots per peer, sixteen total, and expires after 45 seconds using a local monotonic clock. Incoming TLS work is limited before cryptographic processing to four concurrent handshakes, sixteen attempts per source address and sixty-four globally per minute. This leaves room for outgoing connections during an incoming slow-handshake attack. Source-address budgets may also affect multiple legitimate devices behind one address. They do not prevent radio interference or saturation of the underlying network link.
+New channel admissions are limited to 4 attempts per automatic LAN-origin peer, 8 per other peer, and 32 globally per minute; excess metadata can be requested again later on the same TLS connection. Missing-channel news has at most four pending slots per peer, sixteen total, and expires after 45 seconds using a local monotonic clock. Incoming TLS work is limited before cryptographic processing to four concurrent handshakes, sixteen attempts per IPv4 source or IPv6 /64 and sixty-four globally per minute. This leaves room for outgoing connections during an incoming slow-handshake attack. Source-address budgets may also affect multiple legitimate devices behind one address. They do not prevent radio interference or saturation of the underlying network link.
 
 There are at most 16 saved peers, including at most 8 automatic contacts, and 8 active links. Automatic admission permits 16 new identities per minute. When space is needed, a disconnected automatic contact without a pending connection/native route becomes replaceable after 60 seconds since admission or its last successful TLS adoption; repeated beacons alone do not renew it. Saved automatic pins are immediately eligible for replacement after engine restart. Manual contacts and configured starting peers are protected from this rotation. In-flight incoming TLS work delays replacement. An attacker maintaining active links can still compete for the finite slots. Outbound writes have bounded queues and deadlines, so an unresponsive reader cannot hold the gossip pipeline indefinitely; later inventory exchange can retry deferred content.
 

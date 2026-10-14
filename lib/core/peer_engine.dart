@@ -20,6 +20,7 @@ import 'peer_discovery.dart';
 import 'peer_contact.dart';
 import 'peer_contact_store.dart';
 import 'peer_activity.dart';
+import 'peer_penalties.dart';
 import 'pilot_store.dart';
 import 'tcp_enrollment.dart';
 
@@ -69,6 +70,7 @@ class PeerEngine {
     this.outboundFrameTimeout = const Duration(seconds: 10),
     this.bluetoothFrameTimeout = const Duration(seconds: 30),
     this.nearbyDiscoveryInterval = const Duration(seconds: 10),
+    Iterable<String> protectedChannelIds = const [],
   }) : assert(trafficWindow > Duration.zero),
        assert(cooldownDuration > Duration.zero),
        assert(egressBytesPerPeer >= maxFrameBytes),
@@ -85,6 +87,7 @@ class PeerEngine {
        _store = PilotStore(
          directory,
          localOwnerId: (publisherIdentity ?? identity).id,
+         protectedChannelIds: protectedChannelIds,
        );
 
   final Directory directory;
@@ -129,6 +132,8 @@ class PeerEngine {
   final Duration bluetoothFrameTimeout;
   final Duration nearbyDiscoveryInterval;
   final PilotStore _store;
+  void setProtectedChannelIds(Iterable<String> ids) =>
+      _store.setProtectedChannelIds(ids);
   static const maxPeers = 16;
   static const maxConnections = 8;
   static const maxAutomaticContacts = 8;
@@ -165,6 +170,10 @@ class PeerEngine {
   };
   final _TrafficWindow _globalTraffic = _TrafficWindow();
   final Map<String, _PeerTraffic> _peerTraffic = {};
+  late final _penalties = PeerPenalties(
+    nowMs: () => _clock.elapsedMilliseconds,
+    cooldownMs: cooldownDuration.inMilliseconds,
+  );
   int _egressDeferred = 0;
   int _requestDeferred = 0;
   int _trafficLogSuppressed = 0;
@@ -1202,7 +1211,7 @@ class PeerEngine {
     final context = SecurityContext(withTrustedRoots: false)
       ..useCertificateChainBytes(utf8.encode(identity.certPem))
       ..usePrivateKeyBytes(utf8.encode(identity.keyPem))
-      ..minimumTlsProtocolVersion = TlsProtocolVersion.tls1_2;
+      ..minimumTlsProtocolVersion = TlsProtocolVersion.tls1_3;
     for (final peer in peers) {
       context.setTrustedCertificatesBytes(utf8.encode(peer.certificatePem));
     }
@@ -1368,7 +1377,8 @@ class PeerEngine {
     }
     // Apply before TLS allocates/does cryptographic work. The global cap also
     // bounds this address table, without exporting or persisting IP addresses.
-    final count = _handshakeAddresses[address.address] ?? 0;
+    final bucket = PeerPenalties.addressBucket(address);
+    final count = _handshakeAddresses[bucket] ?? 0;
     if (_handshakeAttempts >= incomingHandshakesGlobal ||
         count >=
             (nearbyOnly && address.isLoopback
@@ -1377,7 +1387,7 @@ class PeerEngine {
       return false;
     }
     _handshakeAttempts++;
-    _handshakeAddresses[address.address] = count + 1;
+    _handshakeAddresses[bucket] = count + 1;
     return true;
   }
 
@@ -1903,7 +1913,10 @@ class PeerEngine {
         final knownId = value['id'];
         if (knownId is! String || !_store.channels.containsKey(knownId)) {
           final traffic = _traffic(link.peerId);
-          if (traffic.window.newChannels >= newChannelsPerPeer ||
+          final channelBudget = _origins[link.peerId] == 'lan'
+              ? newChannelsPerPeer ~/ 2
+              : newChannelsPerPeer;
+          if (traffic.window.newChannels >= channelBudget ||
               _globalTraffic.newChannels >= newChannelsGlobal) {
             _channelsDeferred++;
             return;
@@ -2636,8 +2649,7 @@ class PeerEngine {
     return value;
   }
 
-  bool _cooling(String peerId) =>
-      (_peerTraffic[peerId]?.cooldownUntilMs ?? 0) > _clock.elapsedMilliseconds;
+  bool _cooling(String peerId) => _penalties.cooling(peerId);
 
   void _discardPublisherObject(_Link link, String reason) {
     final traffic = _traffic(link.peerId);
@@ -2769,16 +2781,7 @@ class PeerEngine {
     if (link.closed) return;
     _rejected++;
     if (protocolAbuse) {
-      final traffic = _traffic(link.peerId);
-      final now = _clock.elapsedMilliseconds;
-      if (now - traffic.strikeStartedAtMs >=
-          const Duration(minutes: 5).inMilliseconds) {
-        traffic.strikes = 0;
-        traffic.strikeStartedAtMs = now;
-      }
-      if (++traffic.strikes >= 3) {
-        traffic.strikes = 0;
-        traffic.cooldownUntilMs = now + cooldownDuration.inMilliseconds;
+      if (_penalties.strike(link.peerId)) {
         unawaited(_event('peer_cooldown_started', peerId: link.peerId));
       }
     }
@@ -2995,7 +2998,7 @@ class PeerEngine {
       },
       'incomingHandshakeCount': _incomingHandshakes,
       'pendingBulletinCount': _pendingBulletins.length,
-      'coolingPeerCount': _peerTraffic.keys.where(_cooling).length,
+      'coolingPeerCount': _penalties.coolingCount,
       'trafficLogSuppressedCount': _trafficLogSuppressed,
       'lastError': _lastError,
       'bulletins': _store.bulletins.values.toList().reversed.map((raw) {
@@ -3262,9 +3265,6 @@ class _TrafficWindow {
 class _PeerTraffic {
   final window = _TrafficWindow();
   final Map<String, int> responses = {};
-  int strikes = 0;
-  int strikeStartedAtMs = 0;
-  int cooldownUntilMs = 0;
 }
 
 /// Serial frame writes with one absolute deadline per caller, including time

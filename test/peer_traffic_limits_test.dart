@@ -6,6 +6,7 @@ import 'package:persian_trend/core/channels.dart';
 import 'package:persian_trend/core/identity.dart';
 import 'package:persian_trend/core/models.dart';
 import 'package:persian_trend/core/peer_engine.dart';
+import 'package:persian_trend/core/peer_discovery.dart';
 import 'package:persian_trend/core/pilot_store.dart';
 
 void main() {
@@ -34,7 +35,11 @@ void main() {
     if (await scratch.exists()) await scratch.delete(recursive: true);
   });
 
-  PeerEngine engine({int egress = 512 * 1024, Duration? window}) {
+  PeerEngine engine({
+    int egress = 512 * 1024,
+    Duration? window,
+    Duration? cooldown,
+  }) {
     final value = PeerEngine(
       directory: scratch,
       identity: receiver,
@@ -42,7 +47,7 @@ void main() {
       discoveryPort: 0,
       enableLanDiscovery: false,
       trafficWindow: window ?? const Duration(seconds: 1),
-      cooldownDuration: const Duration(seconds: 1),
+      cooldownDuration: cooldown ?? const Duration(seconds: 1),
       egressBytesPerPeer: egress,
       onStatus: (_) {},
       deviceState: () async => {'network': 'wifi'},
@@ -95,6 +100,121 @@ void main() {
 
   Future<void> pair(PeerEngine target, Identity peer) => target.addPeer(
     PeerCard(name: 'Consenting test peer', certificatePem: peer.certPem),
+  );
+
+  test(
+    'forgetting and re-admitting a contact cannot erase its cooldown',
+    () async {
+      final target = engine(cooldown: const Duration(seconds: 10));
+      await pair(target, publisher);
+      await target.start(activeMode: false);
+      for (var i = 0; i < 3; i++) {
+        final client = await connect(target);
+        client.socket.add(utf8.encode('{broken json\n'));
+        await client.socket.flush();
+        await until(
+          () async => (await target.snapshot())['rejectedCount'] == i + 1,
+        );
+      }
+      await target.removePeer(publisher.id);
+      await pair(target, publisher);
+      expect((await target.snapshot())['coolingPeerCount'], 1);
+      final blocked = await connect(target);
+      await until(() async => blocked.closed);
+      expect((await target.snapshot())['connectedCount'], 0);
+    },
+  );
+
+  test('server rejects a TLS 1.2-only ClientHello', () async {
+    final target = engine();
+    await pair(target, publisher);
+    await target.start(activeMode: false);
+    final socket = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      (await target.snapshot())['listenPort'] as int,
+    );
+    // Valid legacy ClientHello: RSA GCM cipher, P-256, RSA-SHA256 signatures.
+    final body = <int>[
+      3,
+      3,
+      ...List.filled(32, 7),
+      0,
+      0,
+      2,
+      0xc0,
+      0x2f,
+      1,
+      0,
+      0,
+      22,
+      0,
+      10,
+      0,
+      4,
+      0,
+      2,
+      0,
+      23,
+      0,
+      11,
+      0,
+      2,
+      1,
+      0,
+      0,
+      13,
+      0,
+      4,
+      0,
+      2,
+      4,
+      1,
+    ];
+    final handshake = <int>[1, 0, 0, body.length, ...body];
+    socket.add([22, 3, 1, 0, handshake.length, ...handshake]);
+    final records = await socket
+        .take(1)
+        .toList()
+        .timeout(const Duration(seconds: 3));
+    socket.destroy();
+    if (records.isNotEmpty) {
+      expect(records.single[0], 21); // Alert, never a legacy ServerHello.
+      expect(records.single.last, 70); // protocol_version
+    }
+    // RawSecureSocket may close before the generated alert is flushed.
+    await until(() async => (await target.snapshot())['rejectedCount'] == 1);
+    expect((await target.snapshot())['connectedCount'], 0);
+  });
+
+  test(
+    'automatic LAN-origin contacts get half the new-channel budget',
+    () async {
+      final target = engine(window: const Duration(seconds: 30));
+      await target.start(activeMode: false);
+      final admission = await target.admitNativePeer(
+        signedBeacon: PeerDiscovery.beacon(publisher, 45871),
+        routeId: 'wifiDirect:budget-check',
+        transport: PeerTransport.wifiDirect,
+      );
+      expect(admission.accepted, true);
+      final client = await connect(target);
+      for (var i = 0; i < 8; i++) {
+        await client.send({
+          'type': 'channel',
+          'value': SignedChannel.create(
+            publisher,
+            name: 'LAN channel $i',
+          ).toJson(),
+        });
+      }
+      await until(
+        () async =>
+            ((await target.snapshot())['trafficDeferred'] as Map)['channels'] ==
+            4,
+      );
+      expect((await target.snapshot())['channels'] as List, hasLength(4));
+      expect((await target.snapshot())['connectedCount'], 1);
+    },
   );
 
   test('repeat requests and reconnects cannot amplify one cached object', () async {

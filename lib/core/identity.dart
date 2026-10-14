@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:basic_utils/basic_utils.dart';
 import 'package:crypto/crypto.dart';
+import 'package:pointycastle/asn1.dart';
 
 /// One cryptographic identity. Production uses independent instances for
 /// publisher signatures and connection authentication. A connection identity
@@ -41,15 +42,52 @@ class Identity {
       csr,
       3651,
       serialNumber: serial.toString(),
-      notBefore: DateTime.now().toUtc().subtract(const Duration(days: 1)),
+      notBefore: DateTime.utc(2000),
       cA: false,
       extKeyUsage: [ExtendedKeyUsage.SERVER_AUTH, ExtendedKeyUsage.CLIENT_AUTH],
     );
     return Identity._(
-      certificate,
+      _withClockIndependentValidity(certificate, privateKey),
       CryptoUtils.encodeRSAPrivateKeyToPemPkcs1(privateKey),
       privateKey,
     );
+  }
+
+  // basic_utils 5.8.2 only emits UTCTime (two-digit years). X.509 requires
+  // GeneralizedTime after 2049. Rebuild and re-sign rather than encoding 9999
+  // as 1999. Validity is not channel revocation: authority stays fingerprint
+  // pinned, with signed policies controlling publisher/editor permissions.
+  static String _withClockIndependentValidity(String pem, RSAPrivateKey key) {
+    final certificate =
+        ASN1Parser(certificateDer(pem)).nextObject() as ASN1Sequence;
+    final original = certificate.elements!.first as ASN1Sequence;
+    final fields = [...original.elements!];
+    fields[4] = ASN1Sequence(
+      elements: [
+        ASN1UtcTime(DateTime.utc(2000)),
+        ASN1GeneralizedTime(DateTime.utc(9999, 12, 31, 23, 59, 59)),
+      ],
+    );
+    final tbs = ASN1Sequence(elements: fields);
+    final signed = ASN1Sequence(
+      elements: [
+        tbs,
+        certificate.elements![1],
+        ASN1BitString(
+          stringValues: CryptoUtils.rsaSign(
+            key,
+            tbs.encode(),
+            algorithmName: 'SHA-256/RSA',
+          ),
+        ),
+      ],
+    );
+    final encoded = base64Encode(signed.encode());
+    final lines = [
+      for (var i = 0; i < encoded.length; i += 64)
+        encoded.substring(i, min(i + 64, encoded.length)),
+    ];
+    return '-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----';
   }
 
   factory Identity.fromJson(Map<String, dynamic> json) {

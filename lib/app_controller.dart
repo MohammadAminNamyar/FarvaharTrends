@@ -25,6 +25,7 @@ import 'core/connection_report.dart' as diagnostics;
 import 'core/models.dart';
 import 'core/peer_engine.dart';
 import 'core/service_lifecycle.dart';
+import 'core/user_errors.dart';
 import 'nearby_transports.dart';
 import 'internet_overlay.dart';
 import 'phone_helper.dart';
@@ -156,6 +157,9 @@ void serviceMain(ServiceInstance service) async {
           preferences.blocked,
         );
         engine?.imageMode = reader!.images;
+        engine?.setProtectedChannelIds(
+          followed.difference(preferences.blocked),
+        );
         final count = news
             .where(
               (v) =>
@@ -170,10 +174,14 @@ void serviceMain(ServiceInstance service) async {
           readerLanguage,
           alert: arrivals.isNotEmpty,
         );
-        service.invoke('readerChanged', {});
+        service.invoke('readerChanged', {
+          'recoveryWarning': reader!.recoveryWarning != null,
+        });
       }
     } catch (_) {
-      service.invoke('readerChanged', {});
+      service.invoke('readerChanged', {
+        'recoveryWarning': reader.recoveryWarning != null,
+      });
     } finally {
       processingReader = false;
     }
@@ -348,6 +356,7 @@ void serviceMain(ServiceInstance service) async {
       } catch (error) {
         service.invoke('failure', {
           'message': error.toString(),
+          'code': userError(error).code,
           'requestId': command['requestId'],
         });
       }
@@ -364,7 +373,10 @@ void serviceMain(ServiceInstance service) async {
         'fa';
     reader = readerState(directory);
     await reader.load();
+    final preferences = ChannelPreferences(directory);
+    await preferences.load();
     engine = PeerEngine(
+      protectedChannelIds: preferences.followed.difference(preferences.blocked),
       channelKeys: channelKeyVault(),
       imageMode: reader.images,
       directory: directory,
@@ -463,11 +475,14 @@ class AppController extends ChangeNotifier {
     required Directory directory,
     required this.identity,
     Identity? publisherIdentity,
+    ReaderState? reader,
     required PeerEngine Function() createEngine,
   }) : publisherIdentity = publisherIdentity ?? identity,
        _engineFactory = createEngine {
     _directory = directory;
     _channelPreferences = ChannelPreferences(directory);
+    _reader = reader;
+    _surfaceRecoveryWarnings();
     loading = false;
   }
 
@@ -479,6 +494,30 @@ class AppController extends ChangeNotifier {
   Map<String, Map<String, dynamic>> nearbyStates = {};
   bool loading = true, busy = false, running = false, activeMode = false;
   String? error;
+  final List<String> _localErrorDetails = [];
+  List<String> get localErrorDetails => List.unmodifiable(_localErrorDetails);
+  void recordFailure(Object exception, {String? code}) {
+    final detail = exception.toString();
+    _localErrorDetails.add(
+      detail.length > 512 ? detail.substring(0, 512) : detail,
+    );
+    if (_localErrorDetails.length > 20) _localErrorDetails.removeAt(0);
+    error = userError(exception, code: code).text(languageCode);
+  }
+
+  void _surfaceRecoveryWarnings() {
+    final codes = [
+      if (_channelPreferences?.recoveryWarning != null) 'channel_recovery',
+      if (_readerRecoveryWarningPending || _reader?.recoveryWarning != null)
+        'reader_recovery',
+    ];
+    if (codes.isNotEmpty) {
+      error = codes
+          .map((code) => userError('', code: code).text(languageCode))
+          .join('\n');
+    }
+  }
+
   String label = 'Test phone';
   String advertisedHost = '';
   String languageCode = 'fa';
@@ -488,6 +527,7 @@ class AppController extends ChangeNotifier {
   Directory? _directory;
   ChannelPreferences? _channelPreferences;
   ReaderState? _reader;
+  bool _readerRecoveryWarningPending = false;
   final _service = FlutterBackgroundService();
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   final Map<String, Completer<dynamic>> _commands = {};
@@ -534,14 +574,13 @@ class AppController extends ChangeNotifier {
       await loadDisplaySettings();
       await loadDeliveryMode();
       _ensureAlive();
-      if (_channelPreferences!.recoveryWarning != null) {
-        error = languageCode == 'fa'
-            ? 'انتخاب‌های ذخیره‌شدهٔ کانال‌ها قابل خواندن نبود. لطفاً انتخاب‌های دنبال‌کردن، پنهان‌کردن و اعتماد را دوباره تنظیم کنید.'
-            : 'Saved channel choices could not be read. Please set your follow, hide and trust choices again.';
-      }
+      _surfaceRecoveryWarnings();
       if (Platform.isAndroid) {
         _subscriptions.add(
-          _service.on('readerChanged').listen((_) {
+          _service.on('readerChanged').listen((data) {
+            if (data?['recoveryWarning'] == true) {
+              _readerRecoveryWarningPending = true;
+            }
             unawaited(_refreshReader());
           }),
         );
@@ -584,7 +623,7 @@ class AppController extends ChangeNotifier {
               return;
             }
             final message = data?['message']?.toString() ?? 'Receiving failed';
-            error = message;
+            recordFailure(message, code: data?['code'] as String?);
             _commands
                 .remove(data?['requestId'])
                 ?.completeError(StateError(message));
@@ -672,7 +711,7 @@ class AppController extends ChangeNotifier {
         }
       }
     } catch (ex) {
-      error = ex.toString();
+      recordFailure(ex);
     }
     loading = false;
     notifyListeners();
@@ -684,6 +723,7 @@ class AppController extends ChangeNotifier {
     return PeerEngine(
       directory: _directory!,
       channelKeys: channelKeyVault(),
+      protectedChannelIds: followedChannelIds,
       imageMode: _reader?.images ?? 'wifiOnly',
       identity: identity!,
       publisherIdentity: publisherIdentity!,
@@ -710,7 +750,7 @@ class AppController extends ChangeNotifier {
     try {
       await action();
     } catch (ex) {
-      error = ex.toString();
+      recordFailure(ex);
     }
     busy = false;
     notifyListeners();
@@ -942,6 +982,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> clearTemporaryLog() async {
+    _localErrorDetails.clear();
     _ensureAlive();
     await _reconcileService();
     if (activeMode && Platform.isAndroid) {
@@ -1146,6 +1187,7 @@ class AppController extends ChangeNotifier {
   Future<void> _refreshReader() async {
     try {
       await _reader?.load();
+      _surfaceRecoveryWarnings();
       if (!Platform.isAndroid || !activeMode) {
         await _reader?.observe(
           (snapshot['bulletins'] as List? ?? [])
@@ -1196,6 +1238,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _readerSettingsChanged() async {
+    _local?.setProtectedChannelIds(followedChannelIds);
     if (Platform.isAndroid && activeMode && await _service.isRunning()) {
       await _send('readerSettings', {'language': languageCode});
     }

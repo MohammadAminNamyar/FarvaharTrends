@@ -85,6 +85,23 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('Farsi timeout copy never exposes an English exception', (
+    tester,
+  ) async {
+    final app = await showApp(tester, language: 'fa');
+    await app.perform(
+      () async => throw TimeoutException('Secret internal stack/path'),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('زمان انتظار تمام شد. لطفاً دوباره تلاش کنید.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('TimeoutException'), findsNothing);
+    expect(find.textContaining('Secret internal'), findsNothing);
+    expect(app.localErrorDetails.single, contains('TimeoutException'));
+  });
+
   Future<void> reveal(WidgetTester tester, Finder finder) async {
     if (finder.evaluate().isEmpty) {
       await tester.scrollUntilVisible(

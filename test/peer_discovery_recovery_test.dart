@@ -42,11 +42,17 @@ void main() {
         expect(diagnostics.single, startsWith('discovery_bind_failed'));
         expect(diagnostics.single, isNot(contains('127.0.0.1')));
         // Repeated native group hints must not cause a tight failing bind loop.
+        final elapsed = Stopwatch()..start();
         for (var i = 0; i < 20; i++) {
           discovery.probe(InternetAddress.loopbackIPv4);
         }
         await Future<void>.delayed(const Duration(milliseconds: 20));
-        expect(diagnostics, hasLength(1));
+        // Under a busy full-suite run a 20 ms timer can resume after the
+        // legitimate 100 ms maintenance retry. Bound attempts by elapsed time.
+        expect(
+          diagnostics.length,
+          lessThanOrEqualTo(1 + elapsed.elapsedMilliseconds ~/ 100),
+        );
         blocker.close();
         await until(() => discovery.localPort == port);
         sender = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
