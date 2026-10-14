@@ -5,6 +5,8 @@ import 'package:pilot_platform/pilot_platform.dart';
 
 import '../app_controller.dart';
 import '../core/channel_recovery.dart';
+import '../core/snapshot_dto.dart';
+import 'localization.dart';
 
 class ChannelToolsPage extends StatefulWidget {
   const ChannelToolsPage({
@@ -20,7 +22,7 @@ class ChannelToolsPage extends StatefulWidget {
   State<ChannelToolsPage> createState() => _ChannelToolsPageState();
 }
 
-class _ChannelToolsPageState extends State<ChannelToolsPage> {
+class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
   @override
   void initState() {
     super.initState();
@@ -33,8 +35,8 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> {
 
   bool busy = false;
   String? message;
-  bool get fa => widget.app.languageCode != 'en';
-  String t(String f, String e) => fa ? f : e;
+  @override
+  bool get fa => isFarsiLanguage(widget.app.languageCode);
   AppController get app => widget.app;
   Future<void> work(Future<void> Function() action) async {
     if (busy) return;
@@ -306,10 +308,9 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: app,
     builder: (context, _) {
-      final channel = (app.snapshot['channels'] as List? ?? [])
-          .whereType<Map>()
-          .where((c) => c['id'] == widget.channelId)
-          .firstOrNull;
+      final channel = widget.channelId == null
+          ? null
+          : Snapshot.fromJson(app.snapshot).channelById(widget.channelId!);
       return Directionality(
         textDirection: fa ? TextDirection.rtl : TextDirection.ltr,
         child: Scaffold(
@@ -327,12 +328,12 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> {
               if (busy) const LinearProgressIndicator(),
               if (channel != null) ...[
                 Text(
-                  channel['name'] as String,
+                  channel.name,
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 16),
               ],
-              if (channel?['owned'] == true) ...[
+              if (channel?.owned == true) ...[
                 tile(
                   Icons.key_rounded,
                   t('ذخیرهٔ نسخهٔ بازیابی', 'Save recovery file'),
@@ -351,8 +352,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> {
                   ),
                   invite,
                 ),
-                for (final editor
-                    in (channel!['editors'] as List? ?? []).whereType<Map>())
+                for (final editor in channel!.editors)
                   Card(
                     child: ListTile(
                       title: Text(editor['label'] as String),
@@ -443,11 +443,12 @@ class _RecoveryPassword extends StatefulWidget {
   State<_RecoveryPassword> createState() => _RecoveryPasswordState();
 }
 
-class _RecoveryPasswordState extends State<_RecoveryPassword> {
+class _RecoveryPasswordState extends State<_RecoveryPassword> with Localized {
   final password = TextEditingController(),
       confirmation = TextEditingController();
   final form = GlobalKey<FormState>();
-  String t(String f, String e) => widget.fa ? f : e;
+  @override
+  bool get fa => widget.fa;
   @override
   void dispose() {
     password.clear();
@@ -587,13 +588,13 @@ class _EditorNameState extends State<_EditorName> {
   );
 }
 
-class ReaderSettingsCard extends StatelessWidget {
+class ReaderSettingsCard extends StatelessWidget with Localized {
   const ReaderSettingsCard({super.key, required this.app});
   final AppController app;
   @override
+  bool get fa => isFarsiLanguage(app.languageCode);
+  @override
   Widget build(BuildContext context) {
-    final fa = app.languageCode != 'en';
-    String t(String f, String e) => fa ? f : e;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),

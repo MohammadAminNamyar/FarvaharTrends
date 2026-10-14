@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
-import '../core/news_timeline.dart';
+import '../core/snapshot_dto.dart';
 import 'channel_tools.dart';
+import 'localization.dart';
 import 'news_components.dart';
 import 'news_card.dart';
+import 'reader_widgets.dart';
+import 'theme.dart';
 export 'news_components.dart';
 
-const _muted = Color(0xFF5A717C);
-const _teal = Color(0xFF267E7B);
-
-class ChannelOptions extends StatelessWidget {
+class ChannelOptions extends StatelessWidget with Localized {
   const ChannelOptions({
     super.key,
     required this.channel,
@@ -21,9 +21,10 @@ class ChannelOptions extends StatelessWidget {
     required this.onSelected,
   });
   final Map<String, dynamic> channel;
-  final bool fa, trusted, busy, muted;
+  @override
+  final bool fa;
+  final bool trusted, busy, muted;
   final ValueChanged<String> onSelected;
-  String t(String f, String e) => fa ? f : e;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +34,7 @@ class ChannelOptions extends StatelessWidget {
       tooltip: t('گزینه‌های کانال', 'Channel options'),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 44, minHeight: 48),
-      icon: const Icon(Icons.more_vert_rounded, color: _muted, size: 21),
+      icon: const Icon(Icons.more_vert_rounded, color: mutedColor, size: 21),
       onPressed: busy
           ? null
           : () async {
@@ -115,16 +116,14 @@ class ChannelNewsPage extends StatefulWidget {
   });
   final AppController app;
   final String channelId;
-  final Future<void> Function(Map<String, dynamic>) onPublish,
-      onIdentity,
-      onBlock;
+  final Future<void> Function(ChannelItem) onPublish, onIdentity, onBlock;
 
   @override
   State<ChannelNewsPage> createState() => _ChannelNewsPageState();
 }
 
 class _ChannelNewsPageState extends State<ChannelNewsPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, Localized {
   String _readStamp = '';
   bool _marking = false;
   @override
@@ -147,13 +146,13 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
     }
   }
 
-  void _markVisible(List<Map<String, dynamic>> news) {
+  void _markVisible(List<NewsItem> news) {
     if (WidgetsBinding.instance.lifecycleState != null &&
         WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return;
     }
     if (ModalRoute.of(context)?.isCurrent != true || _marking) return;
-    final stamp = news.map((v) => v['id']).join(',');
+    final stamp = news.map((v) => v.id).join(',');
     if (stamp == _readStamp) return;
     _readStamp = stamp;
     _marking = true;
@@ -204,10 +203,10 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
   bool savingTrust = false;
   String? trustError;
   AppController get app => widget.app;
-  bool get fa => app.languageCode != 'en';
-  String t(String f, String e) => fa ? f : e;
+  @override
+  bool get fa => isFarsiLanguage(app.languageCode);
 
-  Future<void> _action(String action, Map<String, dynamic> channel) async {
+  Future<void> _action(String action, ChannelItem channel) async {
     if (app.busy || savingTrust) return;
     if (action == 'manage') {
       await Navigator.of(context).push<void>(
@@ -257,10 +256,8 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: app,
     builder: (context, _) {
-      final channel = (app.snapshot['channels'] as List? ?? const [])
-          .cast<Map<String, dynamic>>()
-          .where((c) => c['id'] == widget.channelId)
-          .firstOrNull;
+      final snapshot = Snapshot.fromJson(app.snapshot);
+      final channel = snapshot.channelById(widget.channelId);
       if (channel == null || app.isChannelBlocked(widget.channelId)) {
         return Scaffold(
           appBar: AppBar(),
@@ -269,15 +266,11 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
           ),
         );
       }
-      final owned = channel['owned'] == true;
-      final canPublish = owned || channel['canPublish'] == true;
+      final owned = channel.owned;
+      final canPublish = owned || channel.canPublish;
       final followed = app.isChannelFollowed(widget.channelId);
       final trusted = app.isChannelTrusted(widget.channelId);
-      final news = orderNews(
-        (app.snapshot['bulletins'] as List? ?? const [])
-            .cast<Map<String, dynamic>>()
-            .where((b) => b['channelId'] == widget.channelId),
-      );
+      final news = orderNewsItems(snapshot.bulletinsFor(widget.channelId));
       _markVisible(news);
       final assessment = owned
           ? t('کانال شما', 'Your channel')
@@ -295,14 +288,14 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
             onTap: () => widget.onIdentity(channel),
             child: Row(
               children: [
-                ChannelAvatar(channel: channel, size: 38),
+                ChannelAvatar(channel: channel.raw, size: 38),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        channel['name'] as String,
+                        channel.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -314,7 +307,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                         assessment,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 10, color: _muted),
+                        style: const TextStyle(fontSize: 10, color: mutedColor),
                       ),
                     ],
                   ),
@@ -324,7 +317,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
           ),
           actions: [
             ChannelOptions(
-              channel: channel,
+              channel: channel.raw,
               fa: fa,
               trusted: trusted,
               muted: app.isChannelMuted(widget.channelId),
@@ -354,7 +347,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                           children: [
                             const Icon(
                               Icons.campaign_outlined,
-                              color: _teal,
+                              color: tealTextColor,
                               size: 42,
                             ),
                             const SizedBox(height: 16),
@@ -373,7 +366,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                               ),
                               textAlign: TextAlign.center,
                               style: const TextStyle(
-                                color: _muted,
+                                color: mutedColor,
                                 height: 1.7,
                               ),
                             ),
@@ -391,12 +384,12 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 16),
                           child: NewsCard(
-                            news: b,
-                            channel: channel,
+                            news: b.raw,
+                            channel: channel.raw,
                             fa: fa,
                             assessment: assessment,
                             onRemove: owned && !app.busy
-                                ? () => _remove(b['id'] as String)
+                                ? () => _remove(b.id)
                                 : null,
                           ),
                         );
@@ -427,7 +420,10 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                             'انتخاب و اعتماد شما خصوصی است.',
                             'Following and trust are private.',
                           ),
-                          style: const TextStyle(color: _muted, fontSize: 10),
+                          style: const TextStyle(
+                            color: mutedColor,
+                            fontSize: 10,
+                          ),
                         ),
                       ),
                       TextButton(

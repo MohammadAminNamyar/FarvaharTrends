@@ -4,6 +4,8 @@
 /// These replace the private `t()` / digit helpers that were copied per widget.
 library;
 
+import 'package:flutter/widgets.dart';
+
 /// Persian-Indic digits, indexed by the ASCII digit value.
 const persianDigitChars = '۰۱۲۳۴۵۶۷۸۹';
 
@@ -33,4 +35,18 @@ mixin Localized {
   String t(String faText, String enText) => fa ? faText : enText;
 
   String n(Object? value) => localizedDigits(value, fa: fa);
+}
+
+/// The app's current language, for widgets that render outside a
+/// [Localized] owner (dialogs, shared tiles, the legacy diagnostics page).
+class LanguageScope extends InheritedWidget {
+  const LanguageScope({super.key, required this.fa, required super.child});
+  final bool fa;
+
+  /// Farsi unless an enclosing [LanguageScope] selects English.
+  static bool isFarsi(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<LanguageScope>()?.fa ?? true;
+
+  @override
+  bool updateShouldNotify(LanguageScope oldWidget) => fa != oldWidget.fa;
 }
