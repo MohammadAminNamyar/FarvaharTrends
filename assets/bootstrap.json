@@ -1,4 +1,5 @@
 {
-  "version": 1,
-  "peers": []
+  "version": 2,
+  "peers": [],
+  "dhtBootstrap": []
 }

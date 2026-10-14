@@ -662,6 +662,36 @@ class ReaderSettingsCard extends StatelessWidget {
               style: const TextStyle(fontSize: 11, height: 1.7),
             ),
             const Divider(height: 28),
+            SwitchListTile.adaptive(
+              key: const ValueKey('restart-after-reboot'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                t(
+                  'ادامهٔ دریافت پس از راه‌اندازی مجدد',
+                  'Keep receiving after reboot',
+                ),
+              ),
+              subtitle: Text(
+                t(
+                  'سرویس دریافت با اعلان قابل مشاهده، پس از راه‌اندازی مجدد گوشی یا بسته شدن توسط سیستم دوباره شروع می‌شود.',
+                  'The visible receiving service starts again after a phone reboot or an OS kill.',
+                ),
+              ),
+              value: app.restartAfterReboot,
+              onChanged: app.busy
+                  ? null
+                  : (value) =>
+                        app.perform(() => app.setRestartAfterReboot(value)),
+            ),
+            Text(
+              t(
+                'توقف دستی در برنامه این راه‌اندازی را تا شروع بعدی خاموش می‌کند. توقف اجباری و مدیریت باتری سازنده همچنان سرویس را پایان می‌دهند. این گزینه آنچه به اشتراک می‌گذارید را تغییر نمی‌دهد.',
+                'Pressing Stop in the app disarms this until the next start. Force-stop and manufacturer battery killers still end the service. This does not change what is shared.',
+              ),
+              key: const ValueKey('restart-after-reboot-explanation'),
+              style: const TextStyle(fontSize: 11, height: 1.7),
+            ),
+            const Divider(height: 28),
             Text(
               app.appVersion == 'development'
                   ? t('نسخهٔ توسعه', 'Development build')

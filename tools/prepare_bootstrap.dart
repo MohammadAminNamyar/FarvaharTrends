@@ -23,20 +23,29 @@ Future<void> main(List<String> arguments) async {
           throw const FormatException('Specify one output directory.');
         }
       } else {
-        throw const FormatException('Use --bootstrap <public JSON> and --output-directory <project artifact directory>.');
+        throw const FormatException(
+          'Use --bootstrap <public JSON> and --output-directory <project artifact directory>.',
+        );
       }
     }
     if (inputs.isEmpty || inputs.length > maxBootstrapPeers || output == null) {
-      throw const FormatException('Supply 1–16 public bootstrap files and an output directory.');
+      throw const FormatException(
+        'Supply 1–16 public bootstrap files and an output directory.',
+      );
     }
     final project = File.fromUri(Platform.script).parent.parent.absolute;
     final directory = Directory(output).absolute;
     final projectPrefix = '${project.path}${Platform.pathSeparator}';
     final normalizedOutput = directory.uri.normalizePath().toFilePath();
-    if (!normalizedOutput.toLowerCase().startsWith(projectPrefix.toLowerCase())) {
-      throw const FormatException('Generated files must stay inside the project.');
+    if (!normalizedOutput.toLowerCase().startsWith(
+      projectPrefix.toLowerCase(),
+    )) {
+      throw const FormatException(
+        'Generated files must stay inside the project.',
+      );
     }
     final cards = <PeerCard>[];
+    final nodes = <String>[];
     for (final path in inputs) {
       final file = File(path);
       if (await file.length() > maxBootstrapConfigBytes) {
@@ -50,13 +59,21 @@ Future<void> main(List<String> arguments) async {
         }
         bytes.addAll(chunk);
       }
-      cards.addAll(parseBootstrapConfig(utf8.decode(bytes)));
+      final parsed = parseBootstrapConfig(utf8.decode(bytes));
+      cards.addAll(parsed.peers);
+      nodes.addAll(parsed.dhtBootstrap.where((node) => !nodes.contains(node)));
     }
     final peers = mergeBootstrapPeers(cards);
+    final dhtBootstrap = parseDhtBootstrapEntries(nodes);
     if (peers.isEmpty) {
-      throw const FormatException('A volunteer APK needs at least one configured starting peer.');
+      throw const FormatException(
+        'A volunteer APK needs at least one configured starting peer.',
+      );
     }
-    final config = {'version': 1, 'peers': peers.map((card) => card.toJson()).toList()};
+    final config = BootstrapConfig(
+      peers: peers,
+      dhtBootstrap: dhtBootstrap,
+    ).toJson();
     final encoded = jsonEncode(config);
     // Recheck the combined UTF-8 envelope, not only its individual inputs.
     parseBootstrapConfig(encoded);
@@ -69,10 +86,14 @@ Future<void> main(List<String> arguments) async {
       jsonEncode({'PERSIANTREND_BOOTSTRAP_JSON': encoded}),
       flush: true,
     );
-    stdout.writeln('Validated ${peers.length} public dialing hints.');
+    stdout.writeln(
+      'Validated ${peers.length} public dialing hints and ${dhtBootstrap.length} DHT bootstrap nodes.',
+    );
     stdout.writeln('Configuration: ${directory.path}/bootstrap.json');
     stdout.writeln('Dart defines: ${directory.path}/dart-defines.json');
-    stdout.writeln('No network probe was performed. Verify endpoint consent, reachability and relay operation separately.');
+    stdout.writeln(
+      'No network probe was performed. Verify endpoint consent, reachability and relay operation separately.',
+    );
   } on FormatException catch (error) {
     stderr.writeln('Bootstrap validation failed: ${error.message}');
     exitCode = 64;

@@ -14,6 +14,7 @@ import 'package:pilot_platform/pilot_platform.dart';
 
 import 'android_local_wifi.dart';
 import 'core/bootstrap_config.dart';
+import 'core/bootstrap_store.dart';
 import 'core/identity.dart';
 import 'core/channel_key_store.dart';
 import 'core/reader_state.dart';
@@ -23,7 +24,10 @@ import 'core/delivery_mode_store.dart';
 import 'core/channel_preferences.dart';
 import 'core/connection_report.dart' as diagnostics;
 import 'core/models.dart';
+import 'core/peer_contact.dart';
+import 'core/peer_contact_store.dart';
 import 'core/peer_engine.dart';
+import 'core/receiving_policy_store.dart';
 import 'core/service_lifecycle.dart';
 import 'core/user_errors.dart';
 import 'nearby_transports.dart';
@@ -46,15 +50,25 @@ const _appVersion = String.fromEnvironment(
   defaultValue: 'development',
 );
 
-Future<List<PeerCard>> loadBootstrapPeers() async {
+/// Built-in starting peers merged with the device's imported domestic seed.
+/// Imported entries win over asset duplicates; the overall caps still apply.
+Future<BootstrapConfig> loadBootstrapConfig(
+  Directory directory, {
+  BootstrapStore? store,
+}) async {
   const hasOverride = bool.hasEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
   const override = String.fromEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
-  return parseBootstrapConfig(
+  final asset = parseBootstrapConfig(
     hasOverride
         ? override
         : await rootBundle.loadString('assets/bootstrap.json'),
   );
+  final imported = await (store ?? BootstrapStore(directory)).load();
+  return combineBootstrapConfigs(imported.toConfig(), asset);
 }
+
+Future<List<PeerCard>> loadBootstrapPeers(Directory directory) async =>
+    (await loadBootstrapConfig(directory)).peers;
 
 Future<void> setDiscoveryActive(bool active) async {
   if (!Platform.isAndroid) return;
@@ -391,7 +405,7 @@ void serviceMain(ServiceInstance service) async {
       localWifiTransport: Platform.isAndroid
           ? AndroidLocalWifiTransport()
           : null,
-      bootstrapPeers: await loadBootstrapPeers(),
+      bootstrapPeers: await loadBootstrapPeers(directory),
       enablePeerReferrals: true,
       acceptTcpEnrollment: true,
       enableLanDiscovery: !cacheOnlyTest,
@@ -473,7 +487,7 @@ void serviceMain(ServiceInstance service) async {
 }
 
 class AppController extends ChangeNotifier {
-  AppController();
+  AppController() : _configureServiceHook = null;
 
   @visibleForTesting
   AppController.forTesting({
@@ -482,8 +496,10 @@ class AppController extends ChangeNotifier {
     Identity? publisherIdentity,
     ReaderState? reader,
     required PeerEngine Function() createEngine,
+    Future<void> Function(bool autoStartOnBoot)? configureService,
   }) : publisherIdentity = publisherIdentity ?? identity,
-       _engineFactory = createEngine {
+       _engineFactory = createEngine,
+       _configureServiceHook = configureService {
     _directory = directory;
     _channelPreferences = ChannelPreferences(directory);
     _reader = reader;
@@ -516,18 +532,33 @@ class AppController extends ChangeNotifier {
       if (_readerRecoveryWarningPending || _reader?.recoveryWarning != null)
         'reader_recovery',
     ];
-    if (codes.isNotEmpty) {
-      error = codes
-          .map((code) => userError('', code: code).text(languageCode))
-          .join('\n');
-    }
+    final messages = [
+      for (final code in codes) userError('', code: code).text(languageCode),
+      if (_bootstrapRecoveryWarning)
+        languageCode == 'fa'
+            ? 'فهرست همتاهای شروع واردشده قابل خواندن نبود و کنار گذاشته شد. همتاهای داخلی برنامه همچنان استفاده می‌شوند.'
+            : 'The imported starting-peer list could not be read and was set aside. Built-in starting peers are still used.',
+    ];
+    if (messages.isNotEmpty) error = messages.join('\n');
   }
 
   String label = 'Test phone';
   String advertisedHost = '';
   String languageCode = 'fa';
   String get appVersion => _appVersion;
-  List<PeerCard> _bootstrapPeers = [];
+  BootstrapConfig _bootstrapConfig = BootstrapConfig.empty;
+  BootstrapStore? _bootstrapStore;
+  bool _bootstrapRecoveryWarning = false;
+
+  /// Starting peers and operator DHT nodes in effect for the next engine:
+  /// the built-in asset merged with the device's imported domestic seed.
+  BootstrapConfig get bootstrapConfig => _bootstrapConfig;
+
+  /// Saved opt-in: let the visible receiving service start again after a
+  /// reboot or an OS kill. An explicit in-app Stop disarms the service for
+  /// the session without changing this saved choice.
+  bool restartAfterReboot = false;
+  final Future<void> Function(bool autoStartOnBoot)? _configureServiceHook;
   PeerEngine? _local;
   NearbyTransports? _localNearby;
   Directory? _directory;
@@ -576,9 +607,10 @@ class AppController extends ChangeNotifier {
       publisherIdentity = identities.publisher;
       _ensureAlive();
       device = await readDeviceState();
-      _bootstrapPeers = await loadBootstrapPeers();
+      await loadBootstrapConfiguration();
       await loadDisplaySettings();
       await loadDeliveryMode();
+      await loadReceivingPolicy();
       _ensureAlive();
       _surfaceRecoveryWarnings();
       if (Platform.isAndroid) {
@@ -667,26 +699,14 @@ class AppController extends ChangeNotifier {
         );
         // Configure attaches this UI isolate's event stream even when the
         // native service survived a previous Activity/UI engine instance.
-        await _service.configure(
-          androidConfiguration: AndroidConfiguration(
-            onStart: serviceMain,
-            autoStart: false,
-            autoStartOnBoot: false,
-            isForegroundMode: true,
-            notificationChannelId: 'persiantrend_receiving',
-            initialNotificationTitle: languageCode == 'fa'
-                ? 'پرشین‌ترند · دریافت و همگام‌سازی'
-                : 'PersianTrend · receiving and syncing',
-            initialNotificationContent: languageCode == 'fa'
-                ? 'جست‌وجوی همتاها و دریافت خبرهای امضاشده. برای توقف، برنامه را باز کنید.'
-                : 'Finding peers and receiving signed news. Open the app to stop.',
-            foregroundServiceNotificationId: 771,
-            foregroundServiceTypes: [AndroidForegroundType.connectedDevice],
-          ),
-          iosConfiguration: IosConfiguration(autoStart: false),
+        // Boot re-arming stays armed only while the service is running.
+        final nativeRunning = await _service.isRunning();
+        _ensureAlive();
+        await _configureService(
+          autoStartOnBoot: restartAfterReboot && nativeRunning,
         );
         _ensureAlive();
-        if (await _service.isRunning()) {
+        if (nativeRunning) {
           _ensureAlive();
           await PilotPlatform.requestNearbyPermissions();
           activeMode = true;
@@ -723,6 +743,155 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The plugin stores `autoStartOnBoot` natively; the boot receiver and the
+  /// sticky restart path honor it. Everything else here is session wiring.
+  Future<void> _configureService({required bool autoStartOnBoot}) async {
+    if (_configureServiceHook != null) {
+      await _configureServiceHook(autoStartOnBoot);
+      return;
+    }
+    if (!Platform.isAndroid) return;
+    await _service.configure(
+      androidConfiguration: AndroidConfiguration(
+        onStart: serviceMain,
+        autoStart: false,
+        autoStartOnBoot: autoStartOnBoot,
+        isForegroundMode: true,
+        notificationChannelId: 'persiantrend_receiving',
+        initialNotificationTitle: languageCode == 'fa'
+            ? 'پرشین‌ترند · دریافت و همگام‌سازی'
+            : 'PersianTrend · receiving and syncing',
+        initialNotificationContent: languageCode == 'fa'
+            ? 'جست‌وجوی همتاها و دریافت خبرهای امضاشده. برای توقف، برنامه را باز کنید.'
+            : 'Finding peers and receiving signed news. Open the app to stop.',
+        foregroundServiceNotificationId: 771,
+        foregroundServiceTypes: [AndroidForegroundType.connectedDevice],
+      ),
+      iosConfiguration: IosConfiguration(autoStart: false),
+    );
+  }
+
+  @visibleForTesting
+  Future<void> loadReceivingPolicy() async {
+    _ensureAlive();
+    final store = ReceivingPolicyStore(_directory!);
+    restartAfterReboot = await store.load();
+    if (store.recovered) {
+      error = languageCode == 'fa'
+          ? 'تنظیم ادامهٔ دریافت پس از راه‌اندازی مجدد قابل خواندن نبود و خاموش شد.'
+          : 'The restart-after-reboot setting could not be read and was turned off.';
+    }
+    notifyListeners();
+  }
+
+  /// Persist the opt-in first, then re-arm the running service to match.
+  /// While receiving is stopped the service stays disarmed until the next
+  /// normal start, so an explicit Stop is never undone by a reboot.
+  Future<void> setRestartAfterReboot(bool value) => _saveSettings(() async {
+    if (value == restartAfterReboot) return;
+    try {
+      await ReceivingPolicyStore(_directory!).save(restartAfterReboot: value);
+    } catch (_) {
+      throw StateError(
+        languageCode == 'fa'
+            ? 'تنظیم ادامهٔ دریافت ذخیره نشد. فضای ذخیره‌سازی را بررسی کنید و دوباره تلاش کنید.'
+            : 'The restart setting could not be saved. Check available storage and try again.',
+      );
+    }
+    restartAfterReboot = value;
+    await _configureService(autoStartOnBoot: value && running);
+    notifyListeners();
+  });
+
+  @visibleForTesting
+  Future<void> loadBootstrapConfiguration() async {
+    _ensureAlive();
+    final store = _bootstrapStore ??= BootstrapStore(_directory!);
+    _bootstrapConfig = await loadBootstrapConfig(_directory!, store: store);
+    _bootstrapRecoveryWarning = store.recoveryWarning == 'bootstrap_recovery';
+    if (_bootstrapRecoveryWarning) _surfaceRecoveryWarnings();
+  }
+
+  /// Validate pasted text without side effects: a pairing token, one peer
+  /// card or a starting-peer document (version 1 or 2). This phone's own card
+  /// is left out; a document that only contained it is reported as such.
+  BootstrapConfig parseBootstrapDocument(String text) {
+    final parsed = parseBootstrapInput(text);
+    final own = identity?.id;
+    final cards = parsed.peers.where((card) => card.id != own).toList();
+    if (parsed.peers.isNotEmpty &&
+        cards.isEmpty &&
+        parsed.dhtBootstrap.isEmpty) {
+      throw const FormatException(
+        'This is your own card. Use the other phone’s card.',
+      );
+    }
+    if (cards.isEmpty && parsed.dhtBootstrap.isEmpty) {
+      throw const FormatException('The starting-peer list is empty.');
+    }
+    return BootstrapConfig(
+      peers: List<PeerCard>.unmodifiable(cards),
+      dhtBootstrap: parsed.dhtBootstrap,
+    );
+  }
+
+  /// Store dialing hints locally and pair every listed card, exactly like a
+  /// manual card import. Nothing is gossiped; trust stays explicit per card.
+  Future<BootstrapConfig> importBootstrapDocument(String text) async {
+    _ensureAlive();
+    final document = parseBootstrapDocument(text);
+    final hints = BootstrapConfig(
+      peers: document.peers.where((card) => card.host.isNotEmpty).toList(),
+      dhtBootstrap: document.dhtBootstrap,
+    );
+    if (!hints.isEmpty && _directory != null) {
+      final store = _bootstrapStore ??= BootstrapStore(_directory!);
+      await store.import(hints);
+      await loadBootstrapConfiguration();
+    }
+    for (final card in document.peers) {
+      await addPeer(card);
+    }
+    notifyListeners();
+    return document;
+  }
+
+  /// A version 2 document with this device's card (when it has a dialing
+  /// address), currently valid public helper contacts and imported DHT nodes.
+  /// LAN and loopback hints are never exported.
+  Future<String> exportBootstrapDocument() async {
+    _ensureAlive();
+    final own = ownCard();
+    final cards = <PeerCard>[if (own.host.isNotEmpty) own];
+    var dhtBootstrap = const <String>[];
+    if (_directory != null) {
+      for (final contact in await PeerContactStore(_directory!).load()) {
+        final address = InternetAddress.tryParse(contact.peer.host);
+        if (address != null && PeerContact.isPublicAddress(address)) {
+          cards.add(contact.peer);
+        }
+      }
+      final store = _bootstrapStore ??= BootstrapStore(_directory!);
+      dhtBootstrap = (await store.load()).toConfig().dhtBootstrap;
+    }
+    final document = combineBootstrapConfigs(
+      BootstrapConfig(peers: cards),
+      BootstrapConfig(dhtBootstrap: dhtBootstrap),
+    );
+    return jsonEncode(document.toJson());
+  }
+
+  /// Forget every imported starting peer and DHT node. Paired peers and
+  /// built-in starting peers are unaffected.
+  Future<void> removeImportedBootstrap() async {
+    _ensureAlive();
+    if (_directory == null) return;
+    final store = _bootstrapStore ??= BootstrapStore(_directory!);
+    await store.clear();
+    await loadBootstrapConfiguration();
+    notifyListeners();
+  }
+
   PeerEngine _makeEngine() {
     _ensureAlive();
     if (_engineFactory != null) return _engineFactory!();
@@ -737,7 +906,7 @@ class AppController extends ChangeNotifier {
       localWifiTransport: Platform.isAndroid
           ? AndroidLocalWifiTransport()
           : null,
-      bootstrapPeers: _bootstrapPeers,
+      bootstrapPeers: _bootstrapConfig.peers,
       deviceState: readDeviceState,
       onStatus: (value) {
         if (_disposed) return;
@@ -773,6 +942,10 @@ class AppController extends ChangeNotifier {
     if (_directory != null) {
       await _persistDeliveryMode();
     }
+    // A normal start re-arms the saved opt-in before the service launches.
+    // Only the visible foreground service may be restarted by the system.
+    await _configureService(autoStartOnBoot: restartAfterReboot && active);
+    _ensureAlive();
     if (active && Platform.isAndroid) {
       await PilotPlatform.requestNotifications();
       await PilotPlatform.requestNearbyPermissions();
@@ -941,6 +1114,10 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _ensureAlive();
+    // Disarm boot/sticky restarts before the service goes down so an explicit
+    // Stop is never resurrected; the saved preference itself is untouched.
+    await _configureService(autoStartOnBoot: false);
     _ensureAlive();
     if (Platform.isAndroid && await _service.isRunning()) {
       await _send('stop');

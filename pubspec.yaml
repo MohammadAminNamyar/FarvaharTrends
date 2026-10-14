@@ -21,6 +21,7 @@ dependencies:
     path: packages/flutter_pear
   pilot_platform:
     path: packages/pilot_platform
+  qr_flutter: 4.1.0
 
 dev_dependencies:
   # Exercise the locally patched service messenger used by the Android app.

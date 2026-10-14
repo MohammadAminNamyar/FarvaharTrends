@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:pilot_platform/pilot_platform.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app_controller.dart';
+import '../core/bootstrap_config.dart';
 import 'channel_views.dart';
 import 'news_card.dart';
 import 'temporary_log.dart';
@@ -756,6 +758,16 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
               label: const _Localized('Show pairing card'),
             ),
           ),
+          const SizedBox(height: 9),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const ValueKey('share-starting-peers'),
+              onPressed: app.identity == null ? null : _shareStartingPeers,
+              icon: const Icon(Icons.qr_code_2_rounded, size: 17),
+              label: const _Localized('Share starting peers'),
+            ),
+          ),
         ],
       ),
     ),
@@ -777,7 +789,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       child: FilledButton.icon(
         onPressed: app.busy || app.identity == null ? null : _importPeer,
         icon: const Icon(Icons.add_rounded, size: 18),
-        label: const _Localized('Import a peer card'),
+        label: const _Localized('Import a peer card or starting-peer list'),
       ),
     ),
     const SizedBox(height: 14),
@@ -1259,7 +1271,10 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
   }
 
   Future<void> _showOwn() async {
-    final token = app.ownCard().toText();
+    final card = app.ownCard();
+    final token = card.toText();
+    // The compact JSON card is the smallest scannable form of the same card.
+    final qrData = jsonEncode(card.toJson());
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1276,6 +1291,8 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 18),
                 _Fingerprint(app.identity!.id),
+                const SizedBox(height: 18),
+                _QrPanel(qrData, keyName: 'own-card'),
                 const SizedBox(height: 18),
                 SelectableText(
                   token,
@@ -1307,13 +1324,79 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _shareStartingPeers() async {
+    final String document;
+    try {
+      document = await app.exportBootstrapDocument();
+    } catch (ex) {
+      app.recordFailure(ex);
+      return;
+    }
+    if (!mounted) return;
+    final config = parseBootstrapConfig(document);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const _Localized('Share starting peers'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const _Localized(
+                  'A starting-peer list only introduces dialing addresses. It cannot sign news or change what this phone shares. Share it with people you know; it stays on this phone otherwise.',
+                ),
+                const SizedBox(height: 12),
+                _Localized(
+                  config.isEmpty
+                      ? 'Nothing shareable yet: give your card a public address or wait for helper contacts.'
+                      : '${config.peers.length} starting peers · ${config.dhtBootstrap.length} DHT nodes',
+                  style: const TextStyle(color: _muted, fontSize: 11),
+                ),
+                const SizedBox(height: 18),
+                _QrPanel(document, keyName: 'starting-peers'),
+                const SizedBox(height: 18),
+                SelectableText(
+                  document,
+                  key: const ValueKey('starting-peers-text'),
+                  style: const TextStyle(fontSize: 9, color: _muted),
+                  maxLines: 8,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const _Localized('Close'),
+          ),
+          FilledButton.icon(
+            key: const ValueKey('copy-starting-peers'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: document));
+              if (dialogContext.mounted) {
+                Navigator.pop(dialogContext);
+                _toast('Starting-peer list copied');
+              }
+            },
+            icon: const Icon(Icons.copy_rounded, size: 15),
+            label: const _Localized('Copy list'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _importPeer() async {
     final token = TextEditingController();
     String? error;
-    final card = await _inputDialog<PeerCard>(
+    final document = await _inputDialog<(String, BootstrapConfig)>(
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, update) => AlertDialog(
-          title: const _Localized('Import a peer card'),
+          title: const _Localized('Import a peer card or starting-peer list'),
           content: SizedBox(
             width: 420,
             child: SingleChildScrollView(
@@ -1322,13 +1405,14 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const _Localized(
-                    'Paste the card shared by the other test phone.',
+                    'Paste the card shared by the other test phone, or a starting-peer list.',
                   ),
                   const SizedBox(height: 18),
                   TextField(
+                    key: const ValueKey('import-peer-text'),
                     controller: token,
                     maxLines: 5,
-                    maxLength: maxEnvelopeBytes,
+                    maxLength: maxBootstrapConfigBytes,
                     decoration: const InputDecoration(
                       labelText: 'Pairing token',
                       alignLabelWithHint: true,
@@ -1349,15 +1433,14 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
               child: const _Localized('Cancel'),
             ),
             FilledButton(
+              key: const ValueKey('review-import'),
               onPressed: () {
                 try {
-                  final card = PeerCard.fromText(token.text.trim());
-                  if (card.id == app.identity?.id) {
-                    throw const FormatException(
-                      'This is your own card. Use the other phone’s card.',
-                    );
-                  }
-                  Navigator.pop(dialogContext, card);
+                  final text = token.text.trim();
+                  Navigator.pop(dialogContext, (
+                    text,
+                    app.parseBootstrapDocument(text),
+                  ));
                 } catch (ex) {
                   app.recordFailure(ex);
                   update(() => error = app.error);
@@ -1370,11 +1453,17 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       ),
     );
     token.dispose();
-    if (card == null || !mounted) return;
+    if (document == null || !mounted) return;
+    final (text, config) = document;
+    final cards = config.peers;
     final approved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: _Localized('Trust ${card.name}?'),
+        title: _Localized(
+          cards.length == 1
+              ? 'Trust ${cards.single.name}?'
+              : 'Trust ${cards.length} starting peers?',
+        ),
         content: SizedBox(
           width: 420,
           child: SingleChildScrollView(
@@ -1385,14 +1474,31 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                 const _Localized(
                   'Compare every group below with the fingerprint shown on the other phone, using a channel you trust.',
                 ),
-                const SizedBox(height: 18),
-                _Fingerprint(card.id),
-                const SizedBox(height: 18),
-                _Localized(
-                  card.host.isEmpty
-                      ? 'Trust only · no dialing address'
-                      : 'Address: ${card.host}:${card.port}',
-                ),
+                for (final card in cards) ...[
+                  const SizedBox(height: 18),
+                  if (cards.length > 1)
+                    _Localized(
+                      card.name,
+                      style: const TextStyle(
+                        color: _ink,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  _Fingerprint(card.id),
+                  const SizedBox(height: 8),
+                  _Localized(
+                    card.host.isEmpty
+                        ? 'Trust only · no dialing address'
+                        : 'Address: ${card.host}:${card.port}',
+                  ),
+                ],
+                if (config.dhtBootstrap.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  _Localized(
+                    'DHT nodes: ${config.dhtBootstrap.join(', ')}',
+                    style: const TextStyle(color: _muted, fontSize: 11),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 const _Localized(
                   'This peer can send signed test bulletins and receive yours. A matching fingerprint confirms identity, not network reachability.',
@@ -1407,13 +1513,16 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
             child: const _Localized('Cancel'),
           ),
           FilledButton(
+            key: const ValueKey('approve-import'),
             onPressed: () => Navigator.pop(dialogContext, true),
             child: const _Localized('Fingerprint matches · trust'),
           ),
         ],
       ),
     );
-    if (approved == true) await app.perform(() => app.addPeer(card));
+    if (approved == true) {
+      await app.perform(() => app.importBootstrapDocument(text));
+    }
   }
 
   Future<void> _editPeer(Map<String, dynamic> raw) async {
@@ -2089,6 +2198,51 @@ String _time(dynamic millis) {
   return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 }
 
+/// Largest payload a version-40 QR code holds in byte mode at error
+/// correction level M. Larger content keeps the copyable text instead.
+const int maxQrBytes = 2331;
+
+class _QrPanel extends StatelessWidget {
+  const _QrPanel(this.data, {required this.keyName});
+  final String data;
+  final String keyName;
+
+  @override
+  Widget build(BuildContext context) {
+    if (utf8.encode(data).length > maxQrBytes) {
+      return _Localized(
+        'This content is too large for a QR code. Use the copy button to share it as text.',
+        key: ValueKey('qr-$keyName-too-large'),
+        style: const TextStyle(color: _muted, fontSize: 11),
+      );
+    }
+    return Center(
+      child: Container(
+        key: ValueKey('qr-$keyName'),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _line),
+        ),
+        child: QrImageView(
+          data: data,
+          size: 236,
+          errorCorrectionLevel: QrErrorCorrectLevel.M,
+          backgroundColor: Colors.white,
+          errorStateBuilder: (context, _) => SizedBox(
+            width: 236,
+            child: _Localized(
+              'This content is too large for a QR code. Use the copy button to share it as text.',
+              key: ValueKey('qr-$keyName-too-large'),
+              style: const TextStyle(color: _muted, fontSize: 11),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Language extends InheritedWidget {
   const _Language({required this.fa, required super.child});
   final bool fa;
@@ -2101,7 +2255,7 @@ class _Language extends InheritedWidget {
 // Advanced diagnostics retain the same controls as the earlier paired pilot.
 // Localization is applied at render time so switching language preserves state.
 class _Localized extends StatelessWidget {
-  const _Localized(this.data, {this.style, this.textAlign});
+  const _Localized(this.data, {super.key, this.style, this.textAlign});
   final String data;
   final TextStyle? style;
   final TextAlign? textAlign;
@@ -2234,6 +2388,17 @@ const _diagnosticFa = <String, String>{
   'Copy this card to the other phone. Compare the complete fingerprint together. Import their card here too.': 'این کارت را به دستگاه دیگر بدهید و همهٔ بخش‌های اثر انگشت را مقایسه کنید. کارت آن دستگاه را نیز اینجا وارد کنید.',
   'Paste the card shared by the other test phone.':
       'کارت دستگاه آزمایشی دیگر را اینجا وارد کنید.',
+  'Paste the card shared by the other test phone, or a starting-peer list.':
+      'کارت دستگاه آزمایشی دیگر یا فهرست همتاهای شروع را اینجا وارد کنید.',
+  'Import a peer card or starting-peer list':
+      'وارد کردن کارت همتا یا فهرست همتاهای شروع',
+  'Share starting peers': 'اشتراک همتاهای شروع',
+  'Copy list': 'کپی فهرست',
+  'Starting-peer list copied': 'فهرست همتاهای شروع کپی شد',
+  'Pairing card copied': 'کارت کپی شد',
+  'A starting-peer list only introduces dialing addresses. It cannot sign news or change what this phone shares. Share it with people you know; it stays on this phone otherwise.': 'فهرست همتاهای شروع فقط نشانی اتصال را معرفی می‌کند؛ نمی‌تواند خبر امضا کند یا آنچه این گوشی به اشتراک می‌گذارد را تغییر دهد. آن را به افرادی که می‌شناسید بدهید؛ در غیر این صورت روی همین گوشی می‌ماند.',
+  'Nothing shareable yet: give your card a public address or wait for helper contacts.': 'هنوز چیزی برای اشتراک نیست: به کارت خود نشانی عمومی بدهید یا منتظر مخاطب‌های یاری‌گر بمانید.',
+  'This content is too large for a QR code. Use the copy button to share it as text.': 'این محتوا برای کد QR بیش از حد بزرگ است. با دکمهٔ کپی آن را به‌صورت متن به اشتراک بگذارید.',
   'Compare every group below with the fingerprint shown on the other phone, using a channel you trust.': 'همهٔ گروه‌های زیر را از یک مسیر مورد اعتماد با اثر انگشت دستگاه دیگر مقایسه کنید.',
   'This peer can send signed test bulletins and receive yours. A matching fingerprint confirms identity, not network reachability.': 'این همتا می‌تواند پیام امضاشده بفرستد و دریافت کند. تطابق اثر انگشت، دسترسی شبکه یا هویت انسانی را تضمین نمی‌کند.',
   'Use an address the other phone can reach. Wi-Fi addresses usually work only on the same local network.': 'نشانی باید از دستگاه مقابل قابل دسترس باشد. IP وای‌فای معمولاً فقط در همان شبکهٔ محلی کار می‌کند.',

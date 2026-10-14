@@ -306,6 +306,58 @@ void main() {
     },
   );
 
+  testWidgets('Reader settings expose the reboot opt-in with its limits', (
+    tester,
+  ) async {
+    final app = await showApp(tester);
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('restart-after-reboot'));
+    await tester.dragUntilVisible(
+      toggle,
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('ادامهٔ دریافت پس از راه‌اندازی مجدد'), findsOneWidget);
+    expect(
+      find.textContaining('توقف اجباری و مدیریت باتری سازنده'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('تغییر نمی‌دهد'), findsOneWidget);
+    expect(app.restartAfterReboot, isFalse);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(app.restartChanges, [true]);
+    expect(app.restartAfterReboot, isTrue);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(app.restartChanges, [true, false]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('English reboot opt-in copy names what still stops it', (
+    tester,
+  ) async {
+    await showApp(tester, language: 'en');
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('restart-after-reboot'));
+    await tester.dragUntilVisible(
+      toggle,
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, -200),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Keep receiving after reboot'), findsOneWidget);
+    expect(find.textContaining('Force-stop'), findsOneWidget);
+    expect(
+      find.textContaining('does not change what is shared'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   for (final language in ['fa', 'en']) {
     testWidgets(
       '$language privacy distinguishes readers without promising safety',
@@ -397,8 +449,16 @@ class _ModeController extends AppController {
   }
 
   final changes = <DeliveryMode>[];
+  final restartChanges = <bool>[];
   Completer<void>? modeGate;
   bool failNextChange = false;
+
+  @override
+  Future<void> setRestartAfterReboot(bool value) async {
+    restartAfterReboot = value;
+    restartChanges.add(value);
+    notifyListeners();
+  }
 
   @override
   Future<void> setDeliveryMode(DeliveryMode value) async {

@@ -184,7 +184,7 @@ void main() {
     expect(Theme.of(context).textTheme.bodyMedium?.fontFamily, 'Vazirmatn');
     expect(Localizations.localeOf(context).languageCode, 'fa');
     expect(find.text('Numeric IP address'), findsNothing);
-    expect(find.text('Import a peer card'), findsNothing);
+    expect(find.text('Import a peer card or starting-peer list'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -512,7 +512,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Advanced diagnostics'), findsOneWidget);
       await tab(tester, 'Peers');
-      expect(find.text('Import a peer card'), findsOneWidget);
+      expect(
+        find.text('Import a peer card or starting-peer list'),
+        findsOneWidget,
+      );
       await tab(tester, 'Results');
       final export = find.widgetWithText(OutlinedButton, 'Export trial report');
       await reveal(tester, export);
