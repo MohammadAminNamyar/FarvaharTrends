@@ -102,6 +102,22 @@ void main() {
     expect(app.localErrorDetails.single, contains('TimeoutException'));
   });
 
+  testWidgets('reader settings show the current build version', (tester) async {
+    final app = await showApp(tester, language: 'fa');
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
+    await tester.pumpAndSettle();
+    final version = find.byKey(const ValueKey('reader-app-version'));
+    expect(version, findsOneWidget);
+    final label = tester.widget<Text>(version).data!;
+    expect(
+      label,
+      app.appVersion == 'development'
+          ? 'نسخهٔ توسعه'
+          : contains(app.appVersion),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   Future<void> reveal(WidgetTester tester, Finder finder) async {
     if (finder.evaluate().isEmpty) {
       await tester.scrollUntilVisible(

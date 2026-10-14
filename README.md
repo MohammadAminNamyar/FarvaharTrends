@@ -32,6 +32,12 @@ Install **Flutter 3.47.5 / Dart 3.13.4**, **JDK 17 or newer**, Node.js with npm,
 
 From a clean checkout:
 
+Local verification currently uses the SDK reporting Flutter 3.47.5 / Dart 3.13.4
+at revision `6a19cca56475dbfba1478ee68d7bd0c2ef891da1`, recorded as
+`[user-branch]` in `.metadata`. That branch label is not proof of a public stable
+release or a reproducible SDK installation. Preserve this distinction when
+comparing builds; no CI or release pipeline is included in this change.
+
 ```sh
 flutter doctor
 flutter pub get
@@ -43,6 +49,20 @@ node --test test/overlay_discovery_test.cjs
 flutter devices
 flutter run -d <android-device-id>
 ```
+
+Native protocol/lifecycle checks are JUnit 4 tests under
+`packages/pilot_platform/android/src/test/`. On Windows with the local SDK and
+JDK configured, run:
+
+```powershell
+. .\tools\android-env.ps1
+# Set JAVA_HOME to your installed JDK 17+ if it is not already configured.
+$env:GRADLE_USER_HOME = Join-Path (Get-Location) '.tooling\gradle'
+.\android\gradlew.bat -p android :pilot_platform:testDebugUnitTest --console=plain
+```
+
+These JVM checks cover protocol rules and resource/lifecycle helpers; they do not
+exercise Android radios. Flutter and Node regression checks remain separate.
 
 `flutter run` uses the normal Android debug signing configuration when no workstation-specific debug keystore exists. To create a debug APK without installing it:
 
@@ -84,4 +104,9 @@ Use harmless, fresh test messages with consenting participants. Follow the inten
 
 `lib/core/` contains the shared protocol and storage, `lib/ui/` contains the interface, and `packages/pilot_platform/` contains the native Android/iOS bridge. `test/` and the retained `tools/tests/` helpers contain regression checks. Generated files, local caches, captures, signing material, and distribution artifacts are excluded from Git.
 
-The bundled Manrope and Vazirmatn fonts retain their SIL Open Font License files in `assets/fonts/`. The vendored background service retains its upstream MIT [license](packages/flutter_background_service_android/LICENSE). The transport fork retains its [license and provenance](packages/flutter_pear/FORK.md). The supplied PersianTrend logo remains the project owner's asset. No project-wide source license has been declared.
+The bundled Manrope and Vazirmatn fonts retain their SIL Open Font License files in `assets/fonts/`. The vendored background service retains its upstream MIT [license](packages/flutter_background_service_android/LICENSE). The transport fork retains its [license and provenance](packages/flutter_pear/FORK.md). The supplied PersianTrend logo remains the project owner's asset.
+
+## License
+
+Application source is available under the [MIT License](LICENSE). Third-party
+components and fonts retain their own license notices.

@@ -1,48 +1,46 @@
 package org.persiantrend.platform;
 
+import org.junit.Test;
+import static org.junit.Assert.*;
+
 /** Standalone JVM checks: one real LAN source cannot consume every proxy slot/quota. */
 public final class LocalWifiIngressBudgetTest {
-  private static int assertions;
-
-  public static void main(String[] args) {
+  @Test
+  public void regressionChecks() {
     LocalWifiIngressBudget budget = new LocalWifiIngressBudget();
-    for (int i = 0; i < 16; i++) check(budget.allow("192.168.1.2", 1000, 0, 0), "source budget available");
-    check(!budget.allow("192.168.1.2", 1001, 0, 0), "single source stopped before global budget");
-    check(budget.allow("192.168.1.3", 1001, 0, 0), "other source still admitted");
-    for (int i = 0; i < 47; i++) check(budget.allow("10.0.0." + i, 1001, 0, 0), "remaining global budget");
-    check(!budget.allow("192.168.1.4", 1002, 0, 0), "global cap enforced");
-    check(budget.trackedSources() <= LocalWifiIngressBudget.MAX_SOURCES, "source table bounded");
-    check(!budget.allow("192.168.1.2", 60999, 0, 0), "window cannot reset early");
-    check(budget.allow("192.168.1.2", 61000, 0, 0), "window expires at boundary");
-    check(budget.trackedSources() == 1, "expired source addresses discarded");
+    for (int i = 0; i < 16; i++) assertTrue("source budget available", budget.allow("192.168.1.2", 1000, 0, 0));
+    assertTrue("single source stopped before global budget", !budget.allow("192.168.1.2", 1001, 0, 0));
+    assertTrue("other source still admitted", budget.allow("192.168.1.3", 1001, 0, 0));
+    for (int i = 0; i < 47; i++) assertTrue("remaining global budget", budget.allow("10.0.0." + i, 1001, 0, 0));
+    assertTrue("global cap enforced", !budget.allow("192.168.1.4", 1002, 0, 0));
+    assertTrue("source table bounded", budget.trackedSources() <= LocalWifiIngressBudget.MAX_SOURCES);
+    assertTrue("window cannot reset early", !budget.allow("192.168.1.2", 60999, 0, 0));
+    assertTrue("window expires at boundary", budget.allow("192.168.1.2", 61000, 0, 0));
+    assertTrue("expired source addresses discarded", budget.trackedSources() == 1);
 
     budget.reset();
-    check(!budget.allow("192.168.1.2", 10, 4, 4), "four inbound flows reserve outbound capacity");
-    check(!budget.allow("192.168.1.2", 10, 0, 8), "total flow cap enforced");
-    check(budget.trackedSources() == 0, "capacity rejection never creates source records");
-    for (int i = 0; i < 16; i++) check(budget.allow("192.168.1.2", 10, 3, 7), "capacity rejection does not consume quota");
-    check(!budget.allow("192.168.1.2", 10, 3, 7), "source quota remains exact");
+    assertTrue("four inbound flows reserve outbound capacity", !budget.allow("192.168.1.2", 10, 4, 4));
+    assertTrue("total flow cap enforced", !budget.allow("192.168.1.2", 10, 0, 8));
+    assertTrue("capacity rejection never creates source records", budget.trackedSources() == 0);
+    for (int i = 0; i < 16; i++) assertTrue("capacity rejection does not consume quota", budget.allow("192.168.1.2", 10, 3, 7));
+    assertTrue("source quota remains exact", !budget.allow("192.168.1.2", 10, 3, 7));
 
     budget.reset();
     for (int i = 0; i < 10000; i++) budget.allow("source-" + i, 50, 0, 0);
-    check(budget.trackedSources() == 64, "many spoofed sources cannot grow the table beyond global cap");
-    check(budget.allow("next-window", 60050, 0, 0), "new window restores admission");
-    check(budget.trackedSources() == 1, "new window clears spoofed identities");
-    check(budget.allow("clock-restart", 0, 0, 0), "monotonic restart resets state safely");
-    check(budget.trackedSources() == 1, "clock reset clears prior addresses");
-    check(!budget.allow(null, 0, 0, 0), "null source rejected");
-    check(!budget.allow("", 0, 0, 0), "empty source rejected");
-    check(!budget.allow("a".repeat(65), 0, 0, 0), "oversized source rejected");
-    check(!budget.allow("192.168.1.2", -1, 0, 0), "invalid monotonic time rejected");
-    check(!budget.allow("192.168.1.2", 0, -1, 0), "invalid incoming count rejected");
-    check(!budget.allow("192.168.1.2", 0, 0, -1), "invalid total count rejected");
+    assertTrue("many spoofed sources cannot grow the table beyond global cap", budget.trackedSources() == 64);
+    assertTrue("new window restores admission", budget.allow("next-window", 60050, 0, 0));
+    assertTrue("new window clears spoofed identities", budget.trackedSources() == 1);
+    assertTrue("monotonic restart resets state safely", budget.allow("clock-restart", 0, 0, 0));
+    assertTrue("clock reset clears prior addresses", budget.trackedSources() == 1);
+    assertTrue("null source rejected", !budget.allow(null, 0, 0, 0));
+    assertTrue("empty source rejected", !budget.allow("", 0, 0, 0));
+    assertTrue("oversized source rejected", !budget.allow("a".repeat(65), 0, 0, 0));
+    assertTrue("invalid monotonic time rejected", !budget.allow("192.168.1.2", -1, 0, 0));
+    assertTrue("invalid incoming count rejected", !budget.allow("192.168.1.2", 0, -1, 0));
+    assertTrue("invalid total count rejected", !budget.allow("192.168.1.2", 0, 0, -1));
     budget.reset();
-    check(budget.trackedSources() == 0, "stop clears all addresses");
-    System.out.println("Local Wi-Fi ingress budget checks passed (" + assertions + " assertions).");
+    assertTrue("stop clears all addresses", budget.trackedSources() == 0);
+
   }
 
-  private static void check(boolean value, String description) {
-    assertions++;
-    if (!value) throw new AssertionError(description);
-  }
 }

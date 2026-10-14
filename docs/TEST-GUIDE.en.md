@@ -4,7 +4,7 @@ Use two consenting Android testers and harmless, invented news. See whether a **
 
 ## Install and open
 
-1. Install the same current test APK on both phones. **Android 8.0 or newer** is required. If Android asks, allow **Install unknown apps** for the particular browser or file app opening the APK. You can disable that installation permission afterward.
+1. Install the same current test APK on both phones. **Android 10 (API 29) or newer** is required. If Android asks, allow **Install unknown apps** for the particular browser or file app opening the APK. You can disable that installation permission afterward.
 2. Open PersianTrend. Persian is the default; **EN** switches to English and **فارسی** switches back. The main tabs are **Connection**, **Channels**, and **News**.
 3. Receiving starts automatically on Android, using a visible foreground service. For radio tests, **Enable nearby connections** requests the relevant permissions and can show Android's Bluetooth-enable prompt. Older Android may also require location permission/settings for discovery; the app does not read GPS. Denied radio permission need not prevent a working IP/Wi-Fi connection.
 

@@ -41,6 +41,10 @@ const _vault = FlutterSecureStorage(
 FlutterSecureStorage get identityVaultForTesting => _vault;
 String? _discoveryLockError;
 String? _nearbyError;
+const _appVersion = String.fromEnvironment(
+  'FLUTTER_BUILD_NAME',
+  defaultValue: 'development',
+);
 
 Future<List<PeerCard>> loadBootstrapPeers() async {
   const hasOverride = bool.hasEnvironment('PERSIANTREND_BOOTSTRAP_JSON');
@@ -102,6 +106,7 @@ Future<Map<String, dynamic>> readDeviceState() async {
   try {
     return {
       ...await PilotPlatform.state(),
+      if (_appVersion != 'development') 'appVersion': _appVersion,
       if (_discoveryLockError != null)
         'discoveryLockError': _discoveryLockError,
       if (_nearbyError != null) 'nearbyError': _nearbyError,
@@ -521,6 +526,7 @@ class AppController extends ChangeNotifier {
   String label = 'Test phone';
   String advertisedHost = '';
   String languageCode = 'fa';
+  String get appVersion => _appVersion;
   List<PeerCard> _bootstrapPeers = [];
   PeerEngine? _local;
   NearbyTransports? _localNearby;

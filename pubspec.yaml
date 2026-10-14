@@ -54,5 +54,5 @@ flutter_launcher_icons:
   android: true
   ios: true
   image_path: assets/brand/logo.jpg
-  min_sdk_android: 26
+  min_sdk_android: 29
   remove_alpha_ios: true

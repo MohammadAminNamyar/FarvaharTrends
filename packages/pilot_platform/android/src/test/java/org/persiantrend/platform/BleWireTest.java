@@ -1,20 +1,17 @@
 package org.persiantrend.platform;
 
+import org.junit.Test;
+import static org.junit.Assert.*;
+
 import java.util.Arrays;
 
 /** Host JVM protocol tests; no Bluetooth hardware or Android framework mocks. */
 public final class BleWireTest {
-  private static int assertions;
-  private static void check(boolean value) {
-    assertions++;
-    if (!value) throw new AssertionError("Assertion " + assertions + " failed");
-  }
   private static void rejects(Runnable call) {
-    assertions++;
-    try { call.run(); } catch (IllegalArgumentException expected) { return; }
-    throw new AssertionError("Expected bounded protocol rejection");
+    assertThrows(IllegalArgumentException.class, call::run);
   }
-  public static void main(String[] args) {
+  @Test
+  public void regressionChecks() {
     byte[] beacon = new byte[BleWire.MAX_BEACON];
     for (int i = 0; i < beacon.length; i++) beacon[i] = (byte) (i * 73);
     byte[] hello = BleWire.hello(beacon);
@@ -25,12 +22,12 @@ public final class BleWireTest {
     for (int offset = 0; offset < hello.length; offset += 17) {
       decoded = decoder.read(BleWire.frame(BleWire.HELLO, sequence++,
           Arrays.copyOfRange(hello, offset, Math.min(hello.length, offset + 17))));
-      check(decoded.payload == null || offset + 17 >= hello.length);
+      assertTrue(decoded.payload == null || offset + 17 >= hello.length);
     }
-    check(Arrays.equals(beacon, decoded.payload));
-    check(BleWire.number(decoder.read(BleWire.frame(BleWire.READY, sequence++, BleWire.number(BleWire.WINDOW))).payload) == BleWire.WINDOW);
-    check(Arrays.equals(new byte[] {1, 2, 3}, decoder.read(BleWire.frame(BleWire.DATA, sequence++, new byte[] {1, 2, 3})).payload));
-    check(BleWire.number(decoder.read(BleWire.frame(BleWire.CREDIT, sequence++, BleWire.number(3))).payload) == 3);
+    assertTrue(Arrays.equals(beacon, decoded.payload));
+    assertTrue(BleWire.number(decoder.read(BleWire.frame(BleWire.READY, sequence++, BleWire.number(BleWire.WINDOW))).payload) == BleWire.WINDOW);
+    assertTrue(Arrays.equals(new byte[] {1, 2, 3}, decoder.read(BleWire.frame(BleWire.DATA, sequence++, new byte[] {1, 2, 3})).payload));
+    assertTrue(BleWire.number(decoder.read(BleWire.frame(BleWire.CREDIT, sequence++, BleWire.number(3))).payload) == 3);
     // Sequence wraps without accepting reordering or duplicate discovery.
     while (sequence < 65538) decoder.read(BleWire.frame(BleWire.CREDIT, sequence++, BleWire.number(1)));
     int expected = sequence;
@@ -49,6 +46,6 @@ public final class BleWireTest {
     BleWire.Decoder duplicate = new BleWire.Decoder();
     duplicate.read(BleWire.frame(BleWire.HELLO, 0, BleWire.hello(new byte[] {42})));
     rejects(() -> duplicate.read(BleWire.frame(BleWire.HELLO, 1, BleWire.hello(new byte[] {42}))));
-    System.out.println("BleWireTest: " + assertions + " assertions passed");
+
   }
 }

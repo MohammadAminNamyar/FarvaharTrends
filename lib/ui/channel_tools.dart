@@ -661,6 +661,17 @@ class ReaderSettingsCard extends StatelessWidget {
               ),
               style: const TextStyle(fontSize: 11, height: 1.7),
             ),
+            const Divider(height: 28),
+            Text(
+              app.appVersion == 'development'
+                  ? t('نسخهٔ توسعه', 'Development build')
+                  : '${t('نسخهٔ برنامه', 'App version')} ${app.appVersion}',
+              key: const ValueKey('reader-app-version'),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
           ],
         ),
       ),
