@@ -143,6 +143,7 @@ void serviceMain(ServiceInstance service) async {
   PeerEngine? engine;
   NearbyTransports? nearby;
   InternetOverlay? overlay;
+  Future<void> Function(bool announce)? startOverlay;
   PhoneHelper? helper;
   ReaderState? reader;
   String readerLanguage = 'fa';
@@ -317,6 +318,15 @@ void serviceMain(ServiceInstance service) async {
               command['channelId'] as String,
               command['newsId'] as String,
             );
+          case 'setInternetAnnounce':
+            // Only the Internet overlay changes; the engine, nearby radios and
+            // the foreground service keep running, so no permission prompts
+            // and no gap in nearby receiving.
+            if (startOverlay != null) {
+              await overlay?.stop();
+              overlay = null;
+              await startOverlay!(command['value'] == true);
+            }
           case 'readerSettings':
             readerLanguage = command['language'] as String? ?? 'fa';
             await reader?.load();
@@ -434,35 +444,38 @@ void serviceMain(ServiceInstance service) async {
       helper = PhoneHelper(engine);
       await helper.start();
       if (!cacheOnlyTest) {
-        overlay = InternetOverlay(
-          engine,
-          // An announcing phone is already visible on the discovery topic, so
-          // it also serves as a DHT routing node: other phones can cache it as
-          // a domestic entry point for later cold starts. A reader-only phone
-          // stays an ephemeral client and answers no routing queries.
-          // Operator-supplied numeric DHT nodes from the bootstrap document
-          // are tried before the hyperdht defaults.
-          announce: receivingPolicy.internetAnnounce,
-          dhtBootstrap: bootstrap.dhtBootstrap,
-          dhtEphemeral: !receivingPolicy.internetAnnounce,
-          networkKey: () async {
-            final state = await readDeviceState();
-            return state['stateUnavailable'] == true
-                ? null
-                : state['activeNetworkEpoch'] as String?;
-          },
-          onState: (value) {
-            overlayState = value;
-            unawaited(
-              engine!.snapshot().then(
-                (v) => probe.record({...v, 'overlay': value}),
-              ),
-            );
-            service.invoke('overlayStatus', value);
-          },
-        );
+        startOverlay = (bool announce) async {
+          overlay = InternetOverlay(
+            engine!,
+            // An announcing phone is already visible on the discovery topic,
+            // so it also serves as a DHT routing node: other phones can cache
+            // it as a domestic entry point for later cold starts. A
+            // reader-only phone stays an ephemeral client and answers no
+            // routing queries. Operator-supplied numeric DHT nodes from the
+            // bootstrap document are tried before the hyperdht defaults.
+            announce: announce,
+            dhtBootstrap: bootstrap.dhtBootstrap,
+            dhtEphemeral: !announce,
+            networkKey: () async {
+              final state = await readDeviceState();
+              return state['stateUnavailable'] == true
+                  ? null
+                  : state['activeNetworkEpoch'] as String?;
+            },
+            onState: (value) {
+              overlayState = value;
+              unawaited(
+                engine!.snapshot().then(
+                  (v) => probe.record({...v, 'overlay': value}),
+                ),
+              );
+              service.invoke('overlayStatus', value);
+            },
+          );
+          await overlay!.start();
+        };
+        await startOverlay(receivingPolicy.internetAnnounce);
       }
-      await overlay?.start();
     } else {
       overlayState = {'state': 'disabled'};
     }
@@ -842,9 +855,9 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Persist the announce choice, then restart receiving so the Internet
-  /// overlay joins the discovery topic with the new setting. Nearby and
-  /// cached-contact paths are unaffected either way.
+  /// Persist the announce choice, then ask the running service to rejoin the
+  /// Internet discovery topic with the new setting. Receiving itself is not
+  /// stopped; nearby and cached-contact paths are unaffected either way.
   Future<void> setInternetAnnounce(bool value) => _saveSettings(() async {
     if (value == internetAnnounce) return;
     await _persistReceivingPolicy(
@@ -853,9 +866,9 @@ class AppController extends ChangeNotifier {
     internetAnnounce = value;
     notifyListeners();
     if (!running || deliveryMode == DeliveryMode.nearbyOnly) return;
-    final active = activeMode;
-    await stop();
-    await start(active: active);
+    if (Platform.isAndroid && await _service.isRunning()) {
+      await _send('setInternetAnnounce', {'value': value});
+    }
     notifyListeners();
   });
 
