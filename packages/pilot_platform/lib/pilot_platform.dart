@@ -31,17 +31,23 @@ class PilotPlatform {
 
   /// Nearby-only IP transport. Native code pins each socket to a real local
   /// Wi-Fi link; these APIs never fall back to the device's default network.
+  /// The ingress prefaces are engine-issued loopback secrets: they cross only
+  /// this private channel and are never logged, reported or sent on the air.
   static Future<void> startLocalWifi({
     required int tcpPort,
     required int ingressPort,
     required int wifiDirectIngressPort,
     required Uint8List signedBeacon,
+    required Uint8List ingressPreface,
+    required Uint8List wifiDirectIngressPreface,
     int discoveryPort = 45872,
   }) => _channel.invokeMethod('startLocalWifi', {
     'tcpPort': tcpPort,
     'ingressPort': ingressPort,
     'wifiDirectIngressPort': wifiDirectIngressPort,
     'signedBeacon': signedBeacon,
+    'ingressPreface': ingressPreface,
+    'wifiDirectIngressPreface': wifiDirectIngressPreface,
     'discoveryPort': discoveryPort,
   });
   static Future<void> updateLocalWifiBeacon(Uint8List signedBeacon) => _channel
@@ -102,11 +108,13 @@ class PilotPlatform {
     required Uint8List signedBeacon,
     required int tcpPort,
     required int bluetoothIngressPort,
+    Uint8List? bluetoothIngressPreface,
   }) => _channel.invokeMethod('startNearby', {
     'identityId': identityId,
     'signedBeacon': signedBeacon,
     'tcpPort': tcpPort,
     'bluetoothIngressPort': bluetoothIngressPort,
+    'bluetoothIngressPreface': bluetoothIngressPreface,
   });
   static Future<void> updateNearbyBeacon(Uint8List beacon) =>
       _channel.invokeMethod('updateNearbyBeacon', {'signedBeacon': beacon});

@@ -316,16 +316,21 @@ class Pear {
   /// Joins a Hyperswarm [topic] and surfaces peer connections.
   ///
   /// [announce] and [acceptUnannounced] pair up for a dial-only peer and the
-  /// always-on peer it reaches -- see [PearSwarm.join].
+  /// always-on peer it reaches; [dhtBootstrap] and [dhtEphemeral] configure
+  /// the DHT the worklet builds on this first join -- see [PearSwarm.join].
   Future<PearSwarm> join(
     PearKey topic, {
     bool announce = true,
     bool acceptUnannounced = false,
+    List<String> dhtBootstrap = const [],
+    bool dhtEphemeral = true,
   }) => PearSwarm.join(
     _rpc,
     topic,
     announce: announce,
     acceptUnannounced: acceptUnannounced,
+    dhtBootstrap: dhtBootstrap,
+    dhtEphemeral: dhtEphemeral,
   );
 
   /// Public connection-route metadata, confined to this app's private cache.
@@ -339,6 +344,7 @@ class Pear {
         'online': 'dhtOnline',
         'firewalled': 'dhtFirewalled',
         'randomized': 'dhtRandomized',
+        'ephemeral': 'dhtEphemeral',
       }.entries) {
         if (status[field.key] is bool) network[field.value] = status[field.key];
       }

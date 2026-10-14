@@ -9,7 +9,7 @@ const { BOOTSTRAP_NODES } = require('hyperdht/lib/constants')
 const crypto = require('hypercore-crypto')
 const fs = require('bare-fs')
 const path = require('bare-path')
-const { RoutingCache, validNode } = require('./persiantrend-routing')
+const { RoutingCache, validNode, dhtOptions } = require('./persiantrend-routing')
 const { DiscoveryRefresh } = require('./persiantrend-discovery')
 const { TransportCooldown } = require('./persiantrend-cooldown')
 const BUNDLE_VERSION = require('./version')
@@ -39,16 +39,14 @@ function seed () {
 }
 
 const cache = new RoutingCache(fs, path, directory)
-const cached = cache.bootstrapNodes()
-const dht = new DHT({
-  bootstrap: [...cached.slice(0, 8).map(node => `${node.host}:${node.port}`), ...BOOTSTRAP_NODES],
-  nodes: cached, ephemeral: false, maxSize: 256
-})
 const cooling = new TransportCooldown()
-const swarm = new Hyperswarm({
-  dht, seed: seed(), backoffs: [1500, 5000, 15000, 60000], maxPeers: 8, maxClientConnections: 8, maxServerConnections: 8, maxParallel: 2
-})
 const connections = new Map()
+// The DHT is built lazily on the first join so the operator's options apply:
+// ephemeral by default (no routing service for strangers), bootstrap list
+// first, then cached nodes, then the hyperdht defaults.
+let network = dhtOptions()
+let dht = null
+let swarm = null
 let joinedTopic = null
 let discovery = null
 const discoveryRefresh = new DiscoveryRefresh(() => discovery.refresh({ limit: 8 }), () => joinedTopic !== null && connections.size === 0)
@@ -60,14 +58,28 @@ function state (value, reason) {
 }
 
 function save () {
+  if (!dht) return
   try {
     cache.rememberNodes(dht.toArray({ limit: 24 }))
     cache.save()
   } catch { /* Optional cache failure does not interrupt verified news. */ }
 }
-dht.on('ready', save)
 const saveTimer = setInterval(save, 30000)
 if (saveTimer.unref) saveTimer.unref()
+
+function openNetwork () {
+  if (dht) return
+  const cached = cache.bootstrapNodes()
+  dht = new DHT({
+    bootstrap: [...network.bootstrap, ...cached.slice(0, 8).map(node => `${node.host}:${node.port}`), ...BOOTSTRAP_NODES],
+    nodes: cached, ephemeral: network.ephemeral, maxSize: 256
+  })
+  dht.on('ready', save)
+  swarm = new Hyperswarm({
+    dht, seed: seed(), backoffs: [1500, 5000, 15000, 60000], maxPeers: 8, maxClientConnections: 8, maxServerConnections: 8, maxParallel: 2
+  })
+  swarm.on('connection', onConnection)
+}
 
 function validKey (value) { return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) }
 
@@ -83,7 +95,7 @@ function allowance (entry, size) {
     globalWindow.bytes <= 8 * 1024 * 1024 && globalWindow.frames <= 6000
 }
 
-swarm.on('connection', (conn, info) => {
+function onConnection (conn, info) {
   const key = info.publicKey.toString('hex')
   if (!joinedTopic || connections.size >= 8 || cooling.blocked(key)) { conn.on('error', () => {}); conn.destroy(); return }
   const old = connections.get(key)
@@ -106,17 +118,25 @@ swarm.on('connection', (conn, info) => {
     send({ ev: 'connection.close', p: { topic: entry.topic, peer: key } })
     if (connections.size === 0) { discoveryRefresh.disconnected(); state(everConnected ? 'reconnecting' : 'discovering') }
   })
-})
+}
 
 async function handle ({ m, p = {} }) {
   switch (m) {
     case 'attach.info': return { nonce, bundleVersion: BUNDLE_VERSION }
-    case 'dht.status': return { online: dht.online, firewalled: dht.firewalled, randomized: dht.randomized }
+    case 'dht.status': return dht ? { online: dht.online, firewalled: dht.firewalled, randomized: dht.randomized } : { online: false, firewalled: true, randomized: false }
+    case 'dht.configure': {
+      // Validated before the DHT exists; a later change needs a new worklet.
+      if (dht) throw new Error('DHT already started')
+      network = dhtOptions(p)
+      return { bootstrap: network.bootstrap.length, ephemeral: network.ephemeral, announce: network.announce }
+    }
     case 'swarm.join': {
       if (!validKey(p.topic) || (joinedTopic && joinedTopic !== p.topic)) throw new Error('Only one public network namespace is allowed')
       if (!joinedTopic) {
+        if (!dht) network = dhtOptions({ ...p, announce: p.announce !== undefined ? p.announce : p.server !== false })
+        openNetwork()
         joinedTopic = p.topic
-        discovery = swarm.join(Buffer.from(joinedTopic, 'hex'), { server: p.server !== false, client: true, limit: 8 })
+        discovery = swarm.join(Buffer.from(joinedTopic, 'hex'), { server: network.announce, client: true, limit: 8 })
         discoveryRefresh.start()
         for (const key of cache.peerKeys(joinedTopic)) swarm.joinPeer(Buffer.from(key, 'hex'))
       }
@@ -125,7 +145,7 @@ async function handle ({ m, p = {} }) {
       return { joined: joinedTopic }
     }
     case 'swarm.leave': {
-      if (p.topic === joinedTopic) {
+      if (p.topic === joinedTopic && swarm) {
         const previous = joinedTopic
         discoveryRefresh.stop()
         joinedTopic = null
@@ -149,10 +169,11 @@ async function handle ({ m, p = {} }) {
       return null
     }
     case 'persiantrend.network-state': {
-      const own = { host: dht.host, port: dht.port }
-      const helper = !dht.ephemeral && !dht.firewalled && validNode(own)
-      return { discoveryStage: !dht.online ? 'bootstrapping' : swarm.connecting > 0 ? 'connecting' : 'discovering', discoveryRefreshes: discoveryRefresh.refreshes, cachedRoutingCount: cache.bootstrapNodes().length, cachedPeerCount: cache.peers.size,
-        reachableHelper: helper, ownContact: helper ? own : null }
+      // A helper must be announced, persistent (non-ephemeral) and reachable.
+      const own = dht ? { host: dht.host, port: dht.port } : null
+      const helper = !!dht && network.announce && !dht.ephemeral && !dht.firewalled && validNode(own)
+      return { discoveryStage: !dht ? 'idle' : !dht.online ? 'bootstrapping' : swarm.connecting > 0 ? 'connecting' : 'discovering', discoveryRefreshes: discoveryRefresh.refreshes, cachedRoutingCount: cache.bootstrapNodes().length, cachedPeerCount: cache.peers.size,
+        reachableHelper: helper, ownContact: helper ? own : null, ephemeral: dht ? dht.ephemeral : network.ephemeral, announce: network.announce, bootstrapCount: network.bootstrap.length }
     }
     case 'persiantrend.remember-peer': {
       if (!connections.has(p.peer) || p.topic !== joinedTopic) throw new Error('Connection is not active')
@@ -160,7 +181,7 @@ async function handle ({ m, p = {} }) {
       if (validNode(p.node)) {
         const node = { host: p.node.host, port: p.node.port }
         cache.rememberNodes([node], true)
-        dht.addNode(node)
+        if (dht) dht.addNode(node)
       }
       save()
       return null
@@ -168,7 +189,7 @@ async function handle ({ m, p = {} }) {
     case 'persiantrend.disconnect': {
       if (!validKey(p.peer)) throw new Error('Invalid connection key')
       if (p.forget === true) cache.forgetPeer(p.peer)
-      if (p.cooldown !== false) swarm.leavePeer(Buffer.from(p.peer, 'hex'))
+      if (p.cooldown !== false && swarm) swarm.leavePeer(Buffer.from(p.peer, 'hex'))
       cooling.reject(p.peer, p.cooldown !== false)
       connections.get(p.peer)?.conn.destroy()
       save()

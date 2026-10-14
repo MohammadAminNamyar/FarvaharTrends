@@ -166,7 +166,13 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
         }
     }
 
-    protected void updateNotificationInfo() {
+    /**
+     * PersianTrend patch: returns false when Android refuses the foreground
+     * promotion (missing permission, or the API 31+ background-start rules:
+     * ForegroundServiceStartNotAllowedException / ServiceStartNotAllowedException,
+     * both IllegalStateException subclasses). Callers decide whether to stop.
+     */
+    protected boolean updateNotificationInfo() {
         if (config.isForeground()) {
             String packageName = getApplicationContext().getPackageName();
             Intent i = getPackageManager().getLaunchIntentForPackage(packageName);
@@ -193,9 +199,16 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
                 Integer serviceType = ForegroundTypeMapper.getForegroundServiceType(foregroundTypes);
                 ServiceCompat.startForeground(this, notificationId, mBuilder.build(), serviceType);
             } catch (SecurityException e) {
-              Log.w(TAG, "Failed to start foreground service due to SecurityException - have you forgotten to request a permission? - " + e.getMessage());
+                Log.w(TAG, "Failed to start foreground service due to SecurityException - have you forgotten to request a permission? - " + e.getMessage());
+                return false;
+            } catch (IllegalStateException e) {
+                // API 31+: ForegroundServiceStartNotAllowedException and
+                // ServiceStartNotAllowedException extend IllegalStateException.
+                Log.w(TAG, "Foreground service start not allowed: " + e.getClass().getSimpleName());
+                return false;
             }
         }
+        return true;
     }
 
     @Override
@@ -204,7 +217,10 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
         WatchdogReceiver.enqueue(this);
         runService();
 
-        return START_NOT_STICKY;
+        // PersianTrend patch: the OS re-creates a killed service only in the
+        // opt-in restart mode. An explicit stop calls stopSelf(), which Android
+        // never resurrects regardless of the sticky flag (see PATCH-NOTES.md).
+        return config.isAutoStartOnBoot() ? START_STICKY : START_NOT_STICKY;
     }
 
     @SuppressLint("WakelockTimeout")
@@ -214,11 +230,18 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
             return;
         }
         boolean started = false;
+        boolean foregroundRefused = false;
         try {
             Log.v(TAG, "Starting flutter engine for background service");
             acquireServiceWakeLock();
 
-            updateNotificationInfo();
+            if (!updateNotificationInfo()) {
+                // Fail soft: without the foreground promotion the engine must
+                // not start; cleanup below releases the lock and the service
+                // stops itself instead of lingering as a background service.
+                foregroundRefused = true;
+                return;
+            }
 
             FlutterLoader flutterLoader = FlutterInjector.instance().flutterLoader();
             // initialize flutter if it's not initialized yet
@@ -268,6 +291,7 @@ public class BackgroundService extends Service implements MethodChannel.MethodCa
                     dartEntrypoint = null;
                     releaseServiceWakeLock();
                 }
+                if (foregroundRefused) stopSelf();
             }
         }
     }

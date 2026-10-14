@@ -20,16 +20,32 @@ public final class WiFiDirectTransportRulesTest {
     assertTrue("null TXT domain rejected", !WiFiDirectTransport.isAppDomain(null));
 
     Map<String, String> txt = validRecord();
-    assertTrue("public fingerprint parsed", WiFiDirectTransport.validIdentity(txt) != null);
+    assertTrue("session token parsed", "a".repeat(32).equals(WiFiDirectTransport.validSession(txt)));
     assertTrue("service port parsed", WiFiDirectTransport.validPort(txt) == 45871);
     txt.put("app", "other");
-    assertTrue("other app rejected", WiFiDirectTransport.validIdentity(txt) == null);
+    assertTrue("other app rejected", WiFiDirectTransport.validSession(txt) == null);
     txt = validRecord();
-    txt.put("id", "a".repeat(63));
-    assertTrue("short fingerprint rejected", WiFiDirectTransport.validIdentity(txt) == null);
+    txt.put("sid", "a".repeat(31));
+    assertTrue("short token rejected", WiFiDirectTransport.validSession(txt) == null);
     txt = validRecord();
-    txt.put("v", "2");
-    assertTrue("unknown version rejected", WiFiDirectTransport.validIdentity(txt) == null);
+    txt.put("sid", "A".repeat(32));
+    assertTrue("uppercase token rejected", WiFiDirectTransport.validSession(txt) == null);
+    txt = validRecord();
+    txt.put("sid", "a".repeat(64));
+    assertTrue("fingerprint-length token rejected", WiFiDirectTransport.validSession(txt) == null);
+    txt = validRecord();
+    txt.put("v", "1");
+    assertTrue("deprecated v1 TXT rejected", WiFiDirectTransport.validSession(txt) == null);
+    txt = validRecord();
+    txt.put("v", "3");
+    assertTrue("unknown version rejected", WiFiDirectTransport.validSession(txt) == null);
+    txt = validRecord();
+    txt.remove("sid");
+    txt.put("id", "a".repeat(64));
+    assertTrue("stable identity key rejected", WiFiDirectTransport.validSession(txt) == null);
+    txt = validRecord();
+    txt.put("id", "a".repeat(64));
+    assertTrue("identity next to a token rejected", WiFiDirectTransport.validSession(txt) == null);
     for (String invalid : new String[]{"0", "65536", "-1", "45871x", " 45871", "99999999999"}) {
       txt = validRecord();
       txt.put("port", invalid);
@@ -37,7 +53,7 @@ public final class WiFiDirectTransportRulesTest {
     }
     txt = validRecord();
     for (int i = 0; i < 5; i++) txt.put("extra" + i, "ignored");
-    assertTrue("overlarge TXT key map rejected", WiFiDirectTransport.validIdentity(txt) == null);
+    assertTrue("overlarge TXT key map rejected", WiFiDirectTransport.validSession(txt) == null);
 
     WiFiDirectTransport.AttemptBudget budget = new WiFiDirectTransport.AttemptBudget();
     assertTrue("first request allowed", budget.record("peer-a", 1000));
@@ -80,8 +96,8 @@ public final class WiFiDirectTransportRulesTest {
   private static Map<String, String> validRecord() {
     Map<String, String> records = new HashMap<>();
     records.put("app", "persiantrend");
-    records.put("v", "1");
-    records.put("id", "a".repeat(64));
+    records.put("v", "2");
+    records.put("sid", "a".repeat(32));
     records.put("port", "45871");
     return records;
   }

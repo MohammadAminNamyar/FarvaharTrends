@@ -19,7 +19,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
+    <!-- Boot restart is opt-in: BootReceiver only acts when the persisted
+         auto_start_on_boot preference is true (see the vendored service's
+         PATCH-NOTES.md). The restart watchdog stays removed. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:label="${appLabel}"
         android:allowBackup="false"
@@ -34,7 +37,6 @@
             android:foregroundServiceType="connectedDevice"
             android:exported="false" tools:replace="android:foregroundServiceType,android:exported" />
         <receiver android:name="id.flutter.flutter_background_service.WatchdogReceiver" tools:node="remove" />
-        <receiver android:name="id.flutter.flutter_background_service.BootReceiver" tools:node="remove" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

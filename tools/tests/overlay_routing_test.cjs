@@ -67,3 +67,29 @@ test('Bounded cache retains only public route fields and connection keys', t => 
   assert(!text.includes('should-not-be-retained'))
   assert(Buffer.byteLength(text) <= 16384)
 })
+test('Operator DHT options default to ephemeral+announced and validate bootstrap nodes', () => {
+  const { dhtOptions, MAX_BOOTSTRAP } = require('../../packages/flutter_pear/pear-end/persiantrend-routing')
+  assert.deepEqual(dhtOptions(), { bootstrap: [], ephemeral: true, announce: true })
+  assert.deepEqual(dhtOptions({ topic: 'x', server: false }), { bootstrap: [], ephemeral: true, announce: true })
+  assert.deepEqual(dhtOptions({ bootstrap: ['1.1.1.1:49737', '8.8.8.8:1', '1.1.1.1:49737'], ephemeral: false, announce: false }),
+    { bootstrap: ['1.1.1.1:49737', '8.8.8.8:1'], ephemeral: false, announce: false })
+  assert.equal(dhtOptions({ bootstrap: Array.from({ length: MAX_BOOTSTRAP }, (_, i) => `1.1.1.${i + 1}:1`) }).bootstrap.length, MAX_BOOTSTRAP)
+  for (const bad of [
+    { bootstrap: Array.from({ length: MAX_BOOTSTRAP + 1 }, (_, i) => `1.1.1.${i + 1}:1`) },
+    { bootstrap: 'not-a-list' }, { bootstrap: ['example.com:1234'] }, { bootstrap: ['192.168.0.1:1234'] },
+    { bootstrap: ['127.0.0.1:1234'] }, { bootstrap: ['1.1.1.1:0'] }, { bootstrap: ['1.1.1.1:65536'] },
+    { bootstrap: ['1.1.1.1:01'] }, { bootstrap: ['1.1.1.1'] }, { bootstrap: [{ host: '1.1.1.1', port: 1 }] },
+    { bootstrap: ['1.1.1.1:1 '] }, { bootstrap: [null] }, { ephemeral: 'yes' }, { announce: 1 }, null, 'x'
+  ]) assert.throws(() => dhtOptions(bad), undefined, JSON.stringify(bad))
+})
+test('The worklet builds its DHT lazily from the operator options, never as a persistent node by default', () => {
+  const source = fs.readFileSync(path.join(projectRoot, 'packages/flutter_pear/pear-end/persiantrend.js'), 'utf8')
+  assert.doesNotMatch(source, /ephemeral: false/)
+  assert.match(source, /let dht = null/)
+  assert.match(source, /case 'dht\.configure'/)
+  assert.match(source, /bootstrap: \[\.\.\.network\.bootstrap, \.\.\.cached/)
+  assert.match(source, /ephemeral: network\.ephemeral/)
+  assert.match(source, /reachableHelper: helper/)
+  assert.match(source, /network\.announce && !dht\.ephemeral && !dht\.firewalled/)
+  assert.match(source, /server: network\.announce/)
+})

@@ -32,6 +32,29 @@ function hexKey (value) {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
+const MAX_BOOTSTRAP = 16
+
+// Operator DHT configuration. Defaults: ephemeral (this device is not a DHT
+// routing node for strangers) and announced (discoverable on the topic).
+// Bootstrap entries are strict public IPv4 host:port strings, never names.
+function dhtOptions (p = {}) {
+  if (p === null || typeof p !== 'object') throw new Error('Invalid DHT options')
+  const bootstrap = []
+  if (p.bootstrap !== undefined) {
+    if (!Array.isArray(p.bootstrap) || p.bootstrap.length > MAX_BOOTSTRAP) throw new Error('Invalid bootstrap list')
+    for (const entry of p.bootstrap) {
+      const match = typeof entry === 'string' && entry.length <= 21 && /^([0-9.]+):([0-9]{1,5})$/.exec(entry)
+      const node = match ? { host: match[1], port: Number(match[2]) } : null
+      if (!validNode(node) || String(node.port) !== match[2]) throw new Error('Invalid bootstrap node')
+      if (!bootstrap.includes(entry)) bootstrap.push(entry)
+    }
+  }
+  for (const key of ['ephemeral', 'announce']) {
+    if (p[key] !== undefined && typeof p[key] !== 'boolean') throw new Error('Invalid DHT option: ' + key)
+  }
+  return { bootstrap, ephemeral: p.ephemeral !== false, announce: p.announce !== false }
+}
+
 class RoutingCache {
   constructor (fs, path, directory, { now = Date.now, allowLoopback = false } = {}) {
     this.fs = fs
@@ -103,4 +126,4 @@ class RoutingCache {
   }
 }
 
-module.exports = { RoutingCache, publicV4, validNode, MAX_AGE, MAX_NODES, MAX_PEERS }
+module.exports = { RoutingCache, publicV4, validNode, dhtOptions, MAX_AGE, MAX_NODES, MAX_PEERS, MAX_BOOTSTRAP }

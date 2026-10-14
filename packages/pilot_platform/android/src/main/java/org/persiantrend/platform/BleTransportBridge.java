@@ -88,6 +88,8 @@ public final class BleTransportBridge {
   private BluetoothGattCharacteristic serverTx;
   private ExecutorService io;
   private byte[] beacon = EMPTY, token = EMPTY;
+  // Engine-issued secret for its Bluetooth loopback ingress; see LoopbackPreface.
+  private byte[] ingressPreface = EMPTY;
   private int localPort, generation, scanAttempt, advertiseAttempt;
   private boolean running, appVisible, scanning, advertising, serviceReady;
   private Link link;
@@ -97,16 +99,19 @@ public final class BleTransportBridge {
     this.listener = listener;
   }
 
-  public void start(byte[] signedBeacon, int localTlsPort) {
+  public void start(byte[] signedBeacon, int localTlsPort, byte[] localTlsPreface) {
     BleWire.hello(signedBeacon);
     if (localTlsPort < 1 || localTlsPort > 65535) throw new IllegalArgumentException("Invalid TLS ingress port");
+    if (!LoopbackPreface.valid(localTlsPreface)) throw new IllegalArgumentException("Invalid TLS ingress preface");
     byte[] copy = signedBeacon.clone();
+    byte[] prefaceCopy = localTlsPreface.clone();
     main.post(() -> {
       stopInternal();
       running = true;
       generation++;
       beacon = copy;
       localPort = localTlsPort;
+      ingressPreface = prefaceCopy;
       token = new byte[8];
       random.nextBytes(token);
       io = BleRuntime.newIoExecutor();
@@ -603,6 +608,7 @@ public final class BleTransportBridge {
 
   private void connectIngress(Link current) {
     int ingressPort = localPort;
+    byte[] preface = ingressPreface;
     runIo(current, () -> {
       if (current.closed) return;
       Socket socket = new Socket();
@@ -611,6 +617,8 @@ public final class BleTransportBridge {
       try {
         socket.connect(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), ingressPort), 10000);
         socket.setTcpNoDelay(true);
+        // Prove in-process origin to the engine's loopback ingress before TLS.
+        LoopbackPreface.write(socket, preface);
         main.post(() -> {
           current.connectingSocket = null;
           if (!isCurrent(current)) { close(socket); return; }
@@ -633,21 +641,26 @@ public final class BleTransportBridge {
       ServerSocket endpoint = null;
       try {
         endpoint = new ServerSocket();
-        endpoint.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 1);
-        endpoint.setSoTimeout(30000);
+        endpoint.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), LoopbackPreface.BACKLOG);
         current.endpoint = endpoint;
         if (current.closed) return;
         int port = endpoint.getLocalPort();
+        // Per-flow preface: handed to Dart only through the platform channel,
+        // never advertised, logged or placed in the connection report.
+        byte[] preface = LoopbackPreface.newToken(random);
+        long deadline = SystemClock.elapsedRealtime() + 30000;
         main.post(() -> {
           if (!isCurrent(current)) return;
           Map<String, Object> event = event("endpointReady", current);
           event.put("host", "127.0.0.1"); event.put("port", port);
+          event.put("preface", preface.clone());
           event.put("beaconBase64", Base64.encodeToString(current.remoteBeacon, Base64.NO_WRAP));
           emit(event);
         });
-        Socket socket = endpoint.accept();
+        // A wrong local caller is dropped and the flow keeps waiting for the
+        // engine until the deadline; the listener closes on the first success.
+        Socket socket = LoopbackPreface.accept(endpoint, preface, deadline, SystemClock::elapsedRealtime);
         socket.setTcpNoDelay(true);
-        endpoint.close();
         main.post(() -> { if (isCurrent(current)) attachSocket(current, socket); else close(socket); });
       } catch (IOException error) {
         main.post(() -> { if (isCurrent(current)) closeLink(current, "local_endpoint_failed"); });
@@ -757,6 +770,7 @@ public final class BleTransportBridge {
     resetRadio();
     if (io != null) io.shutdownNow();
     io = null;
+    ingressPreface = EMPTY;
     publishState("stopped", null);
   }
 

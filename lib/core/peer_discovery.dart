@@ -22,6 +22,8 @@ class PeerDiscovery {
     required this.listenPort,
     required this.onPeer,
     required this.onDiagnostic,
+    this.onSession,
+    DiscoverySession? session,
     this.port = 45872,
     this.multicast = true,
     this.seedAddresses = const [],
@@ -29,6 +31,7 @@ class PeerDiscovery {
     DiscoverySocketBinder? socketBinder,
     DiscoverySocketBinder? outboundSocketBinder,
   }) : assert(maintenanceInterval > Duration.zero),
+       session = session ?? DiscoverySession(),
        _bindSocket = socketBinder ?? RawDatagramSocket.bind,
        _bindOutboundSocket = outboundSocketBinder ?? RawDatagramSocket.bind;
 
@@ -40,9 +43,23 @@ class PeerDiscovery {
   final Duration maintenanceInterval;
   final DiscoverySocketBinder _bindSocket;
   final DiscoverySocketBinder _bindOutboundSocket;
+
+  /// Rotating per-session token advertised instead of the stable identity.
+  final DiscoverySession session;
+
+  /// Deprecated v1 signed beacons from older peers still deliver a pinned
+  /// certificate. Nothing in this process emits them over the LAN any more.
   final void Function(PeerCard) onPeer;
+
+  /// A v2 beacon carries no key. The engine must dial the endpoint over TLS
+  /// to learn and prove the certificate before any admission.
+  final void Function(DiscoverySessionHint)? onSession;
   final void Function(String?) onDiagnostic;
   static const maxBeaconBytes = 4096;
+  static const beaconLifetimeMs = 45000;
+  static const replayMemoryMs = 300000;
+  static const kindV1 = 'persiantrend/discovery/v1';
+  static const kindV2 = 'persiantrend/discovery/v2';
   static const maxMulticastInterfaces = 8;
   static final group = InternetAddress('239.255.71.71');
   int? get localPort => _socket?.port;
@@ -65,7 +82,10 @@ class PeerDiscovery {
   int _rateCount = 0;
   int _rateStartMs = 0;
 
-  /// Public for protocol tests. A signature proves possession of this key only.
+  /// Deprecated v1 signed beacon: it discloses the stable certificate to every
+  /// passive observer. Kept for point-to-point native/enrollment channels and
+  /// for parsing announcements from older peers; never multicast by [start].
+  /// A signature proves possession of this key only.
   static Uint8List beacon(Identity identity, int listenPort, {int? nowMs}) {
     final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
     final random = Random.secure();
@@ -86,8 +106,34 @@ class PeerDiscovery {
     );
   }
 
-  /// The endpoint always comes from the datagram, never from its payload.
-  static PeerCard parseBeacon(Uint8List bytes, InternetAddress observedSource) {
+  /// Beacon v2: no certificate, fingerprint or signature. A listener learns
+  /// only a rotating random session token and the TLS port; the certificate is
+  /// disclosed inside the TLS handshake to an active connector.
+  static Uint8List sessionBeacon(
+    DiscoverySession session,
+    int listenPort, {
+    int? nowMs,
+  }) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    final random = Random.secure();
+    return Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({
+          'version': 2,
+          'kind': kindV2,
+          'session': session.token,
+          'port': listenPort,
+          'nonce': base64UrlEncode(
+            List<int>.generate(16, (_) => random.nextInt(256)),
+          ),
+          'issuedAtMs': now,
+          'expiresAtMs': now + beaconLifetimeMs,
+        }),
+      ),
+    );
+  }
+
+  static void _checkSource(Uint8List bytes, InternetAddress observedSource) {
     if (bytes.isEmpty ||
         bytes.length > maxBeaconBytes ||
         observedSource.isMulticast ||
@@ -95,6 +141,56 @@ class PeerDiscovery {
         observedSource.address == '::') {
       throw const FormatException('Invalid discovery datagram.');
     }
+  }
+
+  /// The endpoint always comes from the datagram, never from its payload.
+  static DiscoverySessionHint parseSessionBeacon(
+    Uint8List bytes,
+    InternetAddress observedSource,
+  ) {
+    _checkSource(bytes, observedSource);
+    final raw = jsonDecode(utf8.decode(bytes));
+    if (raw is! Map<String, dynamic> ||
+        raw.length != 7 ||
+        !raw.keys.every(
+          {
+            'version',
+            'kind',
+            'session',
+            'port',
+            'nonce',
+            'issuedAtMs',
+            'expiresAtMs',
+          }.contains,
+        ) ||
+        raw['version'] != 2 ||
+        raw['kind'] != kindV2 ||
+        !DiscoverySession.validToken(raw['session']) ||
+        raw['port'] is! int ||
+        (raw['port'] as int) < 1 ||
+        (raw['port'] as int) > 65535 ||
+        raw['nonce'] is! String ||
+        (raw['nonce'] as String).length != 24 ||
+        raw['issuedAtMs'] is! int ||
+        raw['expiresAtMs'] is! int) {
+      throw const FormatException('Invalid discovery fields.');
+    }
+    final issued = raw['issuedAtMs'] as int;
+    if ((raw['expiresAtMs'] as int) - issued != beaconLifetimeMs ||
+        issued < 0) {
+      throw const FormatException('Invalid discovery lifetime.');
+    }
+    return DiscoverySessionHint(
+      session: raw['session'] as String,
+      host: observedSource,
+      port: raw['port'] as int,
+      nonce: raw['nonce'] as String,
+    );
+  }
+
+  /// The endpoint always comes from the datagram, never from its payload.
+  static PeerCard parseBeacon(Uint8List bytes, InternetAddress observedSource) {
+    _checkSource(bytes, observedSource);
     final raw = jsonDecode(utf8.decode(bytes));
     if (raw is! Map<String, dynamic> ||
         raw.length != 8 ||
@@ -111,7 +207,7 @@ class PeerDiscovery {
           }.contains,
         ) ||
         raw['version'] != 1 ||
-        raw['kind'] != 'persiantrend/discovery/v1' ||
+        raw['kind'] != kindV1 ||
         raw['certificatePem'] is! String ||
         raw['port'] is! int ||
         raw['nonce'] is! String ||
@@ -125,7 +221,7 @@ class PeerDiscovery {
     final expiry = raw['expiresAtMs'] as int;
     // Phones need not agree on wall time. Replay suppression uses local elapsed
     // time; the following TLS handshake must still prove possession of the key.
-    if (expiry - issued != 45000 || issued < 0) {
+    if (expiry - issued != beaconLifetimeMs || issued < 0) {
       throw const FormatException('Invalid discovery lifetime.');
     }
     final body = <String, dynamic>{
@@ -160,6 +256,7 @@ class PeerDiscovery {
       return;
     }
     _desiredRunning = true;
+    session.rotate();
     final generation = ++_generation;
     await _maintain(generation);
   }
@@ -329,21 +426,33 @@ class PeerDiscovery {
     try {
       final raw = jsonDecode(utf8.decode(datagram.data));
       if (raw is! Map<String, dynamic>) return;
-      // One signed announcement can arrive from several legitimate interfaces.
+      // One announcement can arrive from several legitimate interfaces.
       // Suppress replay on the same observed route without discarding another
       // source address that the TLS engine may need as a fallback endpoint.
-      final token =
-          '${datagram.address.address}:${raw['nonce']}:${raw['signature']}';
+      final String token, responseKey;
       _seen.removeWhere((_, expiry) => expiry < nowMs);
-      if (_seen.containsKey(token)) return;
-      final peer = parseBeacon(datagram.data, datagram.address);
-      if (peer.id == identity.id) return;
-      if (_seen.length >= 64) _seen.remove(_seen.keys.first);
-      _seen[token] = nowMs + 45000;
-      onPeer(peer);
-      // Reply only after signature validation, at most once per identity/source
-      // each 10 seconds. Repeated replies cannot create a beacon ping-pong.
-      final responseKey = '${peer.id}:${datagram.address.address}';
+      if (raw['version'] == 2) {
+        token =
+            '${datagram.address.address}:2:${raw['session']}:${raw['nonce']}';
+        if (_seen.containsKey(token)) return;
+        final hint = parseSessionBeacon(datagram.data, datagram.address);
+        if (hint.session == session.token) return;
+        _remember(token, nowMs);
+        onSession?.call(hint);
+        responseKey = '${hint.session}:${datagram.address.address}';
+      } else {
+        token =
+            '${datagram.address.address}:1:${raw['nonce']}:${raw['signature']}';
+        if (_seen.containsKey(token)) return;
+        final peer = parseBeacon(datagram.data, datagram.address);
+        if (peer.id == identity.id) return;
+        _remember(token, nowMs);
+        onPeer(peer);
+        responseKey = '${peer.id}:${datagram.address.address}';
+      }
+      // Reply only after validation, at most once per session/source each 10
+      // seconds. Repeated replies cannot create a beacon ping-pong, and the
+      // reply never carries this device's certificate.
       _responseTimes.removeWhere((_, time) => nowMs - time > 60000);
       if (!_responseTimes.containsKey(responseKey) ||
           nowMs - _responseTimes[responseKey]! >= 10000) {
@@ -354,7 +463,7 @@ class PeerDiscovery {
         unawaited(
           _sendUnicast(
             _generation,
-            beacon(identity, listenPort),
+            sessionBeacon(session, listenPort),
             datagram.address,
             datagram.port,
           ),
@@ -363,6 +472,11 @@ class PeerDiscovery {
     } catch (_) {
       // Malformed, repeated and unauthenticated packets have no state effect.
     }
+  }
+
+  void _remember(String token, int nowMs) {
+    if (_seen.length >= 64) _seen.remove(_seen.keys.first);
+    _seen[token] = nowMs + replayMemoryMs;
   }
 
   /// A native group-owner address is only a discovery hint, never a trust pin.
@@ -388,7 +502,12 @@ class PeerDiscovery {
     }
     _probeTimes[address.address] = now;
     unawaited(
-      _sendUnicast(_generation, beacon(identity, listenPort), address, port),
+      _sendUnicast(
+        _generation,
+        sessionBeacon(session, listenPort),
+        address,
+        port,
+      ),
     );
   }
 
@@ -450,7 +569,7 @@ class PeerDiscovery {
   Future<void> _announce(int generation) async {
     final socket = _socket;
     if (socket == null) return;
-    final bytes = beacon(identity, listenPort);
+    final bytes = sessionBeacon(session, listenPort);
     for (final interface in _interfaces.toList()) {
       if (!_current(generation)) return;
       final key = 'multicast:${_interfaceKey(interface)}';
@@ -660,4 +779,53 @@ class _DiscoverySender {
   _DiscoverySender(this.socket);
   final RawDatagramSocket socket;
   StreamSubscription<RawSocketEvent>? subscription;
+}
+
+/// A random 16-byte token that stands in for the identity in LAN and Wi-Fi
+/// Direct announcements. It is rotated on every discovery start and lazily
+/// whenever it is older than [rotation]; it is never derived from any key.
+class DiscoverySession {
+  DiscoverySession({this.rotation = const Duration(minutes: 30), Random? random})
+    : _random = random ?? Random.secure() {
+    rotate();
+  }
+  final Duration rotation;
+  final Random _random;
+  final Stopwatch _age = Stopwatch()..start();
+  late String _token;
+  int rotations = 0;
+
+  /// 32 lowercase hex characters; rotates itself once it is older than
+  /// [rotation] so no caller can keep one token alive indefinitely.
+  String get token {
+    if (_age.elapsed >= rotation) rotate();
+    return _token;
+  }
+
+  void rotate() {
+    _token = List<int>.generate(
+      16,
+      (_) => _random.nextInt(256),
+    ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    _age.reset();
+    rotations++;
+  }
+
+  static bool validToken(Object? value) =>
+      value is String && RegExp(r'^[0-9a-f]{32}$').hasMatch(value);
+}
+
+/// A parsed v2 beacon: an endpoint hint and a session token, nothing else.
+/// Admission still requires a completed, fingerprint-checked TLS handshake.
+class DiscoverySessionHint {
+  const DiscoverySessionHint({
+    required this.session,
+    required this.host,
+    required this.port,
+    required this.nonce,
+  });
+  final String session;
+  final InternetAddress host;
+  final int port;
+  final String nonce;
 }

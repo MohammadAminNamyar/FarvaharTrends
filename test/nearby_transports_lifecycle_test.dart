@@ -154,6 +154,7 @@ class _Radio implements NearbyRadioPlatform {
     required Uint8List signedBeacon,
     required int tcpPort,
     required int bluetoothIngressPort,
+    required Uint8List? bluetoothIngressPreface,
   }) async {
     starts++;
     calls.add('start');

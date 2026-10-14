@@ -478,7 +478,12 @@ void main() {
         await discovery.start();
         await until(() => remotePackets.isNotEmpty);
         final seed = remotePackets.first;
-        expect(PeerDiscovery.parseBeacon(seed.data, seed.address).id, local.id);
+        // Beacon v2 carries the rotating session token, never the certificate.
+        expect(
+          PeerDiscovery.parseSessionBeacon(seed.data, seed.address).session,
+          discovery.session.token,
+        );
+        expect(String.fromCharCodes(seed.data), isNot(contains('CERTIFICATE')));
         expect(seed.port, outgoing.single.port);
         expect(seed.port, isNot(discovery.localPort));
         expect(seed.port, isNot(remoteSocket.port));
@@ -495,8 +500,8 @@ void main() {
         await until(() => remotePackets.length > beforeProbe);
         final probe = remotePackets.last;
         expect(
-          PeerDiscovery.parseBeacon(probe.data, probe.address).id,
-          local.id,
+          PeerDiscovery.parseSessionBeacon(probe.data, probe.address).session,
+          discovery.session.token,
         );
         expect(probe.port, seed.port);
         remoteSocket.send(

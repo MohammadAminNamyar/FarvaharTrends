@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:pilot_platform/pilot_platform.dart';
 
+import 'core/loopback_preface.dart';
 import 'core/peer_engine.dart';
 
 /// Native radios only carry bytes and route hints. The engine authenticates
@@ -77,10 +78,14 @@ class NearbyTransports {
       final snapshot = await engine.snapshot();
       if (!_current(generation)) return;
       await _platform.start(
-        identityId: engine.identity.id,
+        // Wi-Fi Direct TXT advertises the rotating discovery session token,
+        // never the certificate fingerprint (beacon v2). Same channel key.
+        identityId: engine.discoverySessionToken,
         signedBeacon: engine.createDiscoveryBeacon(),
         tcpPort: snapshot['listenPort'] as int,
         bluetoothIngressPort: engine.bluetoothIngressPort ?? 0,
+        // Loopback ingress secret: private channel only, never logged.
+        bluetoothIngressPreface: engine.bluetoothIngressPreface,
       );
       if (!_current(generation)) return;
       _ready = true;
@@ -224,12 +229,16 @@ class NearbyTransports {
       final peerId = _admitted[route];
       final host = InternetAddress.tryParse('${event['host'] ?? ''}');
       final port = event['port'];
+      // The native proxy's single-use preface; it only ever crosses the
+      // private platform channel and is never logged or reported.
+      final preface = event['preface'];
       if (peerId == null ||
           host == null ||
           !host.isLoopback ||
           port is! int ||
           port < 1 ||
-          port > 65535) {
+          port > 65535 ||
+          !LoopbackPreface.valid(preface)) {
         await _platform.admitBluetooth(route, false);
         return;
       }
@@ -239,6 +248,7 @@ class NearbyTransports {
         transport: PeerTransport.bluetooth,
         host: host,
         port: port,
+        preface: preface as Uint8List,
       );
     } else if (type == 'endpointLost') {
       _admitted.remove(route);
@@ -300,6 +310,7 @@ abstract interface class NearbyRadioPlatform {
     required Uint8List signedBeacon,
     required int tcpPort,
     required int bluetoothIngressPort,
+    required Uint8List? bluetoothIngressPreface,
   });
   Future<void> updateBeacon(Uint8List beacon);
   Future<void> allowWifiDirect(bool allowed);
@@ -320,11 +331,13 @@ class AndroidNearbyRadioPlatform implements NearbyRadioPlatform {
     required Uint8List signedBeacon,
     required int tcpPort,
     required int bluetoothIngressPort,
+    required Uint8List? bluetoothIngressPreface,
   }) => PilotPlatform.startNearby(
     identityId: identityId,
     signedBeacon: signedBeacon,
     tcpPort: tcpPort,
     bluetoothIngressPort: bluetoothIngressPort,
+    bluetoothIngressPreface: bluetoothIngressPreface,
   );
   @override
   Future<void> updateBeacon(Uint8List beacon) =>

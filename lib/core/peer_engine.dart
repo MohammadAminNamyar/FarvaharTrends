@@ -15,6 +15,7 @@ import 'media_store.dart';
 import 'delivery_mode.dart';
 import 'identity.dart';
 import 'local_wifi_transport.dart';
+import 'loopback_preface.dart';
 import 'models.dart';
 import 'peer_discovery.dart';
 import 'peer_contact.dart';
@@ -34,10 +35,14 @@ class NativeAdmission {
     required this.accepted,
     this.peerId,
     this.ingressPort,
+    this.ingressPreface,
   });
   final bool accepted;
   final String? peerId;
   final int? ingressPort;
+
+  /// Loopback preface the caller must write to [ingressPort] before TLS.
+  final Uint8List? ingressPreface;
 }
 
 /// Bounded signed gossip over pinned TLS. Numeric endpoints come from manual
@@ -159,6 +164,15 @@ class PeerEngine {
   static const incomingHandshakesPerAddress = 16;
   static const incomingHandshakesGlobal = 64;
   static const maxIncomingHandshakes = 4;
+  // Beacon v2 probes: an unauthenticated hint may cause at most this many
+  // TLS dials per endpoint and per session token within the probe window.
+  static const discoveryProbesPerEndpoint = 4;
+  static const discoveryProbeWindowMs = 5 * 60 * 1000;
+  static const maxDiscoveryProbes = 2;
+  static const maxDiscoveryCandidates = 8;
+  static const discoveryCandidateLifetimeMs = 90000;
+  static const maxSessionPeers = 64;
+  static const sessionPeerLifetimeMs = 45 * 60 * 1000;
   static const _connectionLogKinds = {
     'disconnected',
     'connected',
@@ -214,6 +228,19 @@ class PeerEngine {
   Timer? _localBeaconTimer;
   Future<void>? _localSeedProbe;
   PeerDiscovery? _discovery;
+  // Beacon v2 state. Session tokens map to fingerprints proven by mTLS;
+  // candidates are certificates seen in this device's own failed probe and
+  // trusted for one incoming handshake only; budgets bound dials caused by
+  // unauthenticated hints so a spoofed beacon cannot aim traffic at a victim.
+  final DiscoverySession _discoverySession = DiscoverySession();
+  final Map<String, _SessionPeer> _sessionPeers = {};
+  final Map<String, _DiscoveryCandidate> _discoveryCandidates = {};
+  final Map<String, _ProbeBudget> _probeBudgets = {};
+  final Map<String, _ProbeBackoff> _probeBackoffs = {};
+  final Map<String, int> _probeAddresses = {};
+  final Set<String> _probing = {};
+  int _probeWindowStart = 0;
+  int _probeAttempts = 0;
   int? _searchStartedMs;
   String? _discoveryLastError;
   bool _running = false;
@@ -223,7 +250,15 @@ class PeerEngine {
   final Map<String, RawServerSocket> _overlayServers = {};
   int? _localWifiIngressPort;
   int? _wifiDirectIngressPort;
+  // Loopback ingress secrets (see LoopbackPreface). One per listener and
+  // engine generation; handed to native code or the overlay only in-process
+  // or over the private platform channel. Never logged, reported or gossiped.
+  Uint8List? _bluetoothIngressPreface;
+  Uint8List? _localWifiIngressPreface;
+  Uint8List? _wifiDirectIngressPreface;
+  final Map<String, Uint8List> _overlayPrefaces = {};
   int? get bluetoothIngressPort => _bluetoothIngressPort;
+  Uint8List? get bluetoothIngressPreface => _bluetoothIngressPreface;
   int get boundPort => _port;
   bool hasPinnedRoute(String peerId, String routeId, PeerTransport transport) {
     final link = _links[peerId];
@@ -354,6 +389,9 @@ class PeerEngine {
     _searchStartedMs = _clock.elapsedMilliseconds;
     _discoveryLastError = null;
     _discoveryStatusTimer = Timer(const Duration(seconds: 12), _notify);
+    // A fresh session token per engine start; nothing links two sessions.
+    _discoverySession.rotate();
+    _discoveryCandidates.clear();
     if (nearbyOnly) {
       final transport = localWifiTransport;
       if (transport == null) {
@@ -366,10 +404,25 @@ class PeerEngine {
           tcpPort: _port,
           ingressPort: _localWifiIngressPort!,
           wifiDirectIngressPort: _wifiDirectIngressPort!,
+          ingressPreface: _localWifiIngressPreface!,
+          wifiDirectIngressPreface: _wifiDirectIngressPreface!,
           discoveryPort: discoveryPort,
-          signedBeacon: createDiscoveryBeacon(),
+          signedBeacon: createSessionBeacon(),
           onBeacon: (bytes, address) {
             if (!_running || _generation != generation) return;
+            try {
+              final hint = PeerDiscovery.parseSessionBeacon(bytes, address);
+              unawaited(
+                _serial(() async {
+                  if (_running && _generation == generation) {
+                    await _admitSession(hint);
+                  }
+                }).catchError((Object _) {}),
+              );
+              return;
+            } on FormatException {
+              // Older peers still send deprecated signed v1 beacons.
+            }
             try {
               final peer = PeerDiscovery.parseBeacon(bytes, address);
               unawaited(
@@ -392,7 +445,7 @@ class PeerEngine {
         _localBeaconTimer = Timer.periodic(nearbyDiscoveryInterval, (_) {
           if (!_running || _generation != generation) return;
           unawaited(
-            transport.updateBeacon(createDiscoveryBeacon()).catchError((
+            transport.updateBeacon(createSessionBeacon()).catchError((
               Object _,
             ) {
               if (_running && _generation == generation) {
@@ -423,9 +476,18 @@ class PeerEngine {
           .map((p) => InternetAddress.tryParse(p.host))
           .whereType<InternetAddress>()
           .toList(),
+      session: _discoverySession,
       onPeer: (peer) {
         unawaited(
           _serial(() => _admitDiscovered(peer)).catchError((Object _) {
+            _discoveryLastError = 'discovery_admission_failed';
+            _notify();
+          }),
+        );
+      },
+      onSession: (hint) {
+        unawaited(
+          _serial(() => _admitSession(hint)).catchError((Object _) {
             _discoveryLastError = 'discovery_admission_failed';
             _notify();
           }),
@@ -498,29 +560,410 @@ class PeerEngine {
             Future<void>.value(),
       );
     }
-    var hint = _discoveryHints[peer.host];
+    _installDiscoveredEndpoint(peer.id, InternetAddress(peer.host), peer.port);
+    unawaited(_dialDue());
+    _notify();
+  }
+
+  _Endpoint _installDiscoveredEndpoint(
+    String peerId,
+    InternetAddress host,
+    int port,
+  ) {
+    var hint = _discoveryHints[host.address];
     if (hint == null) {
       for (final candidate in _discoveryHints.values) {
-        if (candidate.matches(InternetAddress(peer.host))) {
+        if (candidate.matches(host)) {
           hint = candidate;
           break;
         }
       }
     }
-    final transport = hint?.transport ?? PeerTransport.lan;
-    _putEndpoint(
-      _Endpoint(
-        peerId: peer.id,
-        routeId: hint?.routeId ?? 'lan:${peer.host}:${peer.port}',
-        transport: transport,
-        host: InternetAddress(peer.host),
-        port: peer.port,
-        availableSinceMs: _clock.elapsedMilliseconds,
-        expiresAtMs: _clock.elapsedMilliseconds + 45000,
-      ),
+    final endpoint = _Endpoint(
+      peerId: peerId,
+      routeId: hint?.routeId ?? 'lan:${host.address}:$port',
+      transport: hint?.transport ?? PeerTransport.lan,
+      host: host,
+      port: port,
+      availableSinceMs: _clock.elapsedMilliseconds,
+      expiresAtMs: _clock.elapsedMilliseconds + 45000,
     );
-    unawaited(_dialDue());
-    _notify();
+    _putEndpoint(endpoint);
+    return (_endpoints[peerId] ?? const <_Endpoint>[]).firstWhere(
+      (existing) => existing.key == endpoint.key,
+      orElse: () => endpoint,
+    );
+  }
+
+  /// Beacon v2 admission. A hint is an unauthenticated endpoint plus a random
+  /// session token. A token already proven by mTLS refreshes the endpoint; an
+  /// unknown token causes at most one bounded outbound TLS probe at a time.
+  Future<void> _admitSession(DiscoverySessionHint hint) async {
+    if (!_running || hint.session == _discoverySession.token) return;
+    final now = _clock.elapsedMilliseconds;
+    _expireDiscoveryState(now);
+    final known = _sessionPeers[hint.session];
+    if (known != null) {
+      final peer = _peers[known.peerId];
+      if (peer == null) {
+        _sessionPeers.remove(hint.session);
+      } else {
+        if (_blockedPeers.contains(peer.id) || _cooling(peer.id)) return;
+        known.expiresAtMs = now + sessionPeerLifetimeMs;
+        _installDiscoveredEndpoint(peer.id, hint.host, hint.port);
+        unawaited(_dialDue());
+        _notify();
+        return;
+      }
+    }
+    final endpointKey = '${hint.host.address}:${hint.port}';
+    // Only on-link targets: a spoofed beacon must not aim connections at an
+    // arbitrary address. Nearby mode additionally relies on the OS-bound proxy.
+    if (!_onLinkDiscoveryTarget(hint.host) ||
+        _probing.contains(endpointKey) ||
+        _probing.length >= maxDiscoveryProbes ||
+        _links.length +
+                _handshakes.length +
+                _connecting.length +
+                _probing.length >=
+            maxConnections) {
+      return;
+    }
+    final backoff = _probeBackoffs[endpointKey];
+    if (backoff != null && backoff.nextAttemptMs > now) return;
+    // The probe is never a cheaper admission path: the automatic admission
+    // budget and contact capacity gate the dial before any socket exists.
+    if (now - _automaticAdmissionWindowStart < trafficWindow.inMilliseconds &&
+        _automaticAdmissions >= automaticAdmissionsPerWindow) {
+      _automaticAdmissionsDeferred++;
+      _discoveryLastError = 'discovery_admission_rate_limit';
+      return;
+    }
+    if ((_peers.length >= maxPeers ||
+            _origins.values.where((v) => v == 'lan').length >=
+                maxAutomaticContacts) &&
+        _oldestStaleAutomaticContact(now) == null) {
+      _discoveryLastError = 'discovery_contact_capacity';
+      return;
+    }
+    final endpointBudget = _probeBudget('endpoint:$endpointKey', now);
+    final sessionBudget = _probeBudget('session:${hint.session}', now);
+    if (endpointBudget.count >= discoveryProbesPerEndpoint ||
+        sessionBudget.count >= discoveryProbesPerEndpoint ||
+        !_allowDiscoveryProbe(hint.host, now)) {
+      _discoveryLastError = 'discovery_probe_budget';
+      return;
+    }
+    endpointBudget.count++;
+    sessionBudget.count++;
+    if (nearbyOnly) {
+      unawaited(
+        localWifiTransport?.probe(hint.host).catchError((Object _) {}) ??
+            Future<void>.value(),
+      );
+    }
+    _probing.add(endpointKey);
+    unawaited(_probeSession(hint, endpointKey, _generation));
+  }
+
+  bool _onLinkDiscoveryTarget(InternetAddress address) {
+    if (address.isLoopback || address.isLinkLocal) return true;
+    if (address.type == InternetAddressType.IPv4) {
+      final b = address.rawAddress;
+      if (b[0] == 10 ||
+          (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+          (b[0] == 192 && b[1] == 168)) {
+        return true;
+      }
+    }
+    return _discoveryHints.values.any((hint) => hint.matches(address));
+  }
+
+  _ProbeBudget _probeBudget(String key, int now) {
+    var budget = _probeBudgets[key];
+    if (budget == null ||
+        now - budget.windowStartMs >= discoveryProbeWindowMs) {
+      if (budget == null && _probeBudgets.length >= 128) {
+        _probeBudgets.remove(_probeBudgets.keys.first);
+      }
+      budget = _ProbeBudget(now);
+      _probeBudgets[key] = budget;
+    }
+    return budget;
+  }
+
+  /// Mirrors the incoming handshake budget: per source bucket and globally
+  /// per minute, counted before any socket or cryptographic work.
+  bool _allowDiscoveryProbe(InternetAddress address, int now) {
+    if (now - _probeWindowStart >= trafficWindow.inMilliseconds) {
+      _probeWindowStart = now;
+      _probeAttempts = 0;
+      _probeAddresses.clear();
+    }
+    final bucket = PeerPenalties.addressBucket(address);
+    final count = _probeAddresses[bucket] ?? 0;
+    if (_probeAttempts >= automaticAdmissionsPerWindow ||
+        count >= incomingHandshakesPerAddress) {
+      return false;
+    }
+    _probeAttempts++;
+    _probeAddresses[bucket] = count + 1;
+    return true;
+  }
+
+  void _expireDiscoveryState(int now) {
+    _sessionPeers.removeWhere((_, value) => value.expiresAtMs < now);
+    final candidates = _discoveryCandidates.length;
+    _discoveryCandidates.removeWhere((_, value) => value.expiresAtMs < now);
+    if (_discoveryCandidates.length != candidates && _running) {
+      _serverContext = _serverTrust();
+    }
+    _probeBudgets.removeWhere(
+      (_, value) => now - value.windowStartMs >= discoveryProbeWindowMs,
+    );
+    _probeBackoffs.removeWhere(
+      (_, value) => now - value.recordedAtMs >= discoveryProbeWindowMs * 2,
+    );
+  }
+
+  /// Trust for incoming handshakes: pinned peers plus short-lived candidates.
+  /// A candidate is only trusted for the handshake; admission follows proof.
+  SecurityContext _serverTrust() => _context([
+    ..._peers.values,
+    ..._discoveryCandidates.values.map((candidate) => candidate.card),
+  ]);
+
+  void _rememberSession(String session, String peerId) {
+    if (!_sessionPeers.containsKey(session) &&
+        _sessionPeers.length >= maxSessionPeers) {
+      _sessionPeers.remove(_sessionPeers.keys.first);
+    }
+    _sessionPeers[session] = _SessionPeer(
+      peerId,
+      _clock.elapsedMilliseconds + sessionPeerLifetimeMs,
+    );
+  }
+
+  void _recordProbeFailure(String endpointKey) {
+    final previous = _probeBackoffs[endpointKey];
+    if (previous == null && _probeBackoffs.length >= 64) {
+      _probeBackoffs.remove(_probeBackoffs.keys.first);
+    }
+    final failures = min((previous?.failures ?? 0) + 1, 6);
+    final now = _clock.elapsedMilliseconds;
+    _probeBackoffs[endpointKey] = _ProbeBackoff(
+      failures,
+      now + (min(60, 1 << failures) + _random.nextInt(3)) * 1000,
+      now,
+    );
+  }
+
+  void _rememberCandidate(String id, String pem, DiscoverySessionHint hint) {
+    if (_peers.containsKey(id) ||
+        _blockedPeers.contains(id) ||
+        _cooling(id)) {
+      return;
+    }
+    final now = _clock.elapsedMilliseconds;
+    _expireDiscoveryState(now);
+    if (!_discoveryCandidates.containsKey(id) &&
+        _discoveryCandidates.length >= maxDiscoveryCandidates) {
+      _discoveryCandidates.remove(_discoveryCandidates.keys.first);
+    }
+    _discoveryCandidates[id] = _DiscoveryCandidate(
+      PeerCard(
+        name: 'Peer ${id.substring(0, 8)}',
+        port: hint.port,
+        certificatePem: pem,
+      ),
+      hint.session,
+      hint.host,
+      hint.port,
+      now + discoveryCandidateLifetimeMs,
+    );
+    _serverContext = _serverTrust();
+  }
+
+  /// An incoming mTLS handshake completed with a candidate certificate: the
+  /// peer proved its key, so admit it exactly like a signed v1 beacon would.
+  Future<bool> _admitDiscoveryCandidate(String id) async {
+    if (!_running) return false;
+    final now = _clock.elapsedMilliseconds;
+    _expireDiscoveryState(now);
+    final candidate = _discoveryCandidates[id];
+    if (candidate == null) return false;
+    // Same capacity rule as TCP enrollment: configured relay links keep room.
+    final reserved = min(2, _bootstrapCount);
+    final clientLinks = _links.values
+        .where((link) => _origins[link.peerId] == 'lan')
+        .length;
+    if (!_links.containsKey(id) && clientLinks >= maxConnections - reserved) {
+      return false;
+    }
+    if (!await _admitIdentity(candidate.card)) return false;
+    _discoveryCandidates.remove(id);
+    _serverContext = _serverTrust();
+    _rememberSession(candidate.session, id);
+    _installDiscoveredEndpoint(id, candidate.host, candidate.port);
+    return true;
+  }
+
+  /// Outbound TLS probe for a v2 beacon. The certificate is learned from the
+  /// handshake only; `onBadCertificate` accepts exactly one valid self-signed
+  /// pilot certificate per probe, and admission happens after the handshake
+  /// completes with that same fingerprint. If the peer answers but rejects
+  /// this unknown client key, its certificate becomes a short-lived candidate
+  /// so the peer's own probe can complete mTLS against this listener.
+  Future<void> _probeSession(
+    DiscoverySessionHint hint,
+    String endpointKey,
+    int generation,
+  ) async {
+    RawSocket? raw;
+    RawSecureSocket? socket;
+    String? learnedId;
+    String? learnedPem;
+    try {
+      final ({InternetAddress host, int port, Uint8List? preface}) destination;
+      if (nearbyOnly) {
+        final transport = localWifiTransport;
+        if (transport == null) throw StateError('local_wifi_unavailable');
+        destination = await transport.open(hint.host, hint.port);
+        if (!destination.host.isLoopback) {
+          throw StateError('local_wifi_proxy_invalid');
+        }
+      } else {
+        destination = (host: hint.host, port: hint.port, preface: null);
+      }
+      if (!_running || generation != _generation) return;
+      raw = await RawSocket.connect(
+        destination.host,
+        destination.port,
+        timeout: const Duration(seconds: 6),
+      );
+      if (!_running || generation != _generation) {
+        await raw.close();
+        return;
+      }
+      _handshakes.add(raw);
+      var expired = false;
+      StreamSubscription<RawSocketEvent>? prefaceSubscription;
+      final loopbackPreface = destination.preface;
+      if (loopbackPreface != null) {
+        prefaceSubscription = await LoopbackPreface.write(raw, loopbackPreface);
+        if (!_running || generation != _generation) {
+          await raw.close();
+          return;
+        }
+      }
+      final handshake = RawSecureSocket.secure(
+        raw,
+        host: hint.host,
+        context: _context(const <PeerCard>[]),
+        subscription: prefaceSubscription,
+        onBadCertificate: (certificate) {
+          // Exactly one certificate per probe: the verifier may ask again for
+          // the same leaf, but a different certificate is never accepted.
+          if (learnedId != null) {
+            return sha256.convert(certificate.der).toString() == learnedId;
+          }
+          try {
+            final pem = certificate.pem;
+            Identity.publicKeyFromCertificate(pem);
+            final id = Identity.certificateId(pem);
+            if (id == identity.id ||
+                _blockedPeers.contains(id) ||
+                _cooling(id)) {
+              return false;
+            }
+            learnedPem = pem;
+            learnedId = id;
+            return true;
+          } on FormatException {
+            return false;
+          }
+        },
+      );
+      unawaited(
+        handshake.then<void>((result) {
+          if (expired) unawaited(result.close());
+        }, onError: (Object _, StackTrace _) {}),
+      );
+      try {
+        socket = await handshake.timeout(const Duration(seconds: 6));
+      } catch (_) {
+        expired = true;
+        await raw.close();
+        rethrow;
+      }
+      final actual = socket.peerCertificate;
+      final id = learnedId;
+      final pem = learnedPem;
+      if (!_running ||
+          generation != _generation ||
+          actual == null ||
+          id == null ||
+          pem == null ||
+          sha256.convert(actual.der).toString() != id) {
+        await socket.close();
+        return;
+      }
+      final card = PeerCard(
+        name: 'Peer ${id.substring(0, 8)}',
+        port: hint.port,
+        certificatePem: pem,
+      );
+      final admitted = await _serial(() async {
+        if (!_running || generation != _generation) return false;
+        if (!await _admitIdentity(card)) return false;
+        _rememberSession(hint.session, id);
+        return true;
+      });
+      if (!admitted || !_running || generation != _generation) {
+        await socket.close();
+        return;
+      }
+      final endpoint = _installDiscoveredEndpoint(id, hint.host, hint.port);
+      _probeBackoffs.remove(endpointKey);
+      _adopt(
+        socket,
+        _peers[id]!,
+        false,
+        transport: endpoint.transport,
+        routeId: endpoint.routeId,
+        endpointKey: endpoint.key,
+      );
+    } catch (error) {
+      await socket?.close();
+      await raw?.close();
+      if (_running && generation == _generation) {
+        final reason = _transportReason(error);
+        _lastError = reason;
+        _recordProbeFailure(endpointKey);
+        final id = learnedId;
+        final pem = learnedPem;
+        if (id != null && pem != null) {
+          await _serial(() async {
+            if (_running && generation == _generation) {
+              _rememberCandidate(id, pem, hint);
+            }
+          });
+        }
+        await _event(
+          'connect_failed',
+          extra: {
+            'reason': reason,
+            'transport': PeerTransport.lan.name,
+            'origin': 'discovery_probe',
+          },
+        );
+      }
+    } finally {
+      _handshakes.remove(raw);
+      _probing.remove(endpointKey);
+      if (generation == _generation) unawaited(_dialDue());
+      _notify();
+    }
   }
 
   Future<bool> _admitIdentity(PeerCard peer) async {
@@ -560,7 +1003,8 @@ class PeerEngine {
     _origins[peer.id] = 'lan';
     _automaticContactUsefulAt[peer.id] = now;
     _automaticAdmissions++;
-    _serverContext = _context(_peers.values);
+    _discoveryCandidates.remove(peer.id);
+    _serverContext = _serverTrust();
     await _savePeers();
     await _event('unverified_contact_discovered', peerId: peer.id);
     return true;
@@ -603,6 +1047,15 @@ class PeerEngine {
 
   Uint8List createDiscoveryBeacon() => PeerDiscovery.beacon(identity, _port);
 
+  /// Beacon v2 for LAN multicast, Wi-Fi Direct probes and nearby Wi-Fi: a
+  /// rotating session token and the TLS port, never the certificate.
+  Uint8List createSessionBeacon() =>
+      PeerDiscovery.sessionBeacon(_discoverySession, _port);
+
+  /// 32-hex token for native announcements (Wi-Fi Direct TXT). It rotates on
+  /// every engine start and lazily after 30 minutes; it names no identity.
+  String get discoverySessionToken => _discoverySession.token;
+
   Future<NativeAdmission> admitNativePeer({
     required Uint8List signedBeacon,
     required String routeId,
@@ -638,13 +1091,16 @@ class PeerEngine {
         InternetAddress.loopbackIPv4,
         0,
       );
+      final preface = LoopbackPreface.newToken();
       _overlayServers[routeId] = server;
+      _overlayPrefaces[routeId] = preface;
       _servers.add(server);
       _listen(
         server,
         _generation,
         transport: transport,
         nativeRouteId: routeId,
+        loopbackPreface: preface,
       );
     }
     _notify();
@@ -656,6 +1112,11 @@ class PeerEngine {
         PeerTransport.overlay => _overlayServers[routeId]?.port,
         _ => _port,
       },
+      ingressPreface: switch (transport) {
+        PeerTransport.bluetooth => _bluetoothIngressPreface,
+        PeerTransport.overlay => _overlayPrefaces[routeId],
+        _ => null,
+      },
     );
   });
 
@@ -665,6 +1126,7 @@ class PeerEngine {
     required PeerTransport transport,
     required InternetAddress host,
     required int port,
+    Uint8List? preface,
   }) => _serial(() async {
     _validateNativeRoute(routeId, transport);
     if (nearbyOnly &&
@@ -688,7 +1150,7 @@ class PeerEngine {
         host.address == '::' ||
         ((transport == PeerTransport.bluetooth ||
                 transport == PeerTransport.overlay) &&
-            !host.isLoopback)) {
+            (!host.isLoopback || !LoopbackPreface.valid(preface)))) {
       throw ArgumentError('Invalid native endpoint.');
     }
     _putEndpoint(
@@ -699,6 +1161,7 @@ class PeerEngine {
         host: host,
         port: port,
         availableSinceMs: _clock.elapsedMilliseconds,
+        preface: preface,
       ),
     );
     unawaited(_dialDue());
@@ -707,6 +1170,7 @@ class PeerEngine {
 
   Future<void> removeNativeRoute(String routeId) => _serial(() async {
     _nativeRoutes.remove(routeId);
+    _overlayPrefaces.remove(routeId);
     final overlayServer = _overlayServers.remove(routeId);
     if (overlayServer != null) {
       _servers.remove(overlayServer);
@@ -1043,15 +1507,27 @@ class PeerEngine {
         _port = listenPort == 0 ? 45871 : listenPort;
         final lan = await RawServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         _localWifiIngressPort = lan.port;
+        _localWifiIngressPreface = LoopbackPreface.newToken();
         _servers.add(lan);
-        _listen(lan, generation, transport: PeerTransport.lan);
+        _listen(
+          lan,
+          generation,
+          transport: PeerTransport.lan,
+          loopbackPreface: _localWifiIngressPreface,
+        );
         final direct = await RawServerSocket.bind(
           InternetAddress.loopbackIPv4,
           0,
         );
         _wifiDirectIngressPort = direct.port;
+        _wifiDirectIngressPreface = LoopbackPreface.newToken();
         _servers.add(direct);
-        _listen(direct, generation, transport: PeerTransport.wifiDirect);
+        _listen(
+          direct,
+          generation,
+          transport: PeerTransport.wifiDirect,
+          loopbackPreface: _wifiDirectIngressPreface,
+        );
       } else {
         final ipv4 = await RawServerSocket.bind(
           InternetAddress.anyIPv4,
@@ -1064,13 +1540,28 @@ class PeerEngine {
       }
       // A separate loopback listener attributes native Bluetooth ingress.
       // It still requires the same admitted client certificate and pinned TLS.
+      //
+      // Preface design for engine-owned ingress listeners: native code opens
+      // these flows, so the engine (listener owner) issues one 32-byte secret
+      // per listener and generation, handed over with the port on the private
+      // platform channel. Per-flow tokens would need a native-to-Dart round
+      // trip before every inbound connection for no extra safety: the secret
+      // never leaves this process, loopback traffic is not observable by other
+      // apps, and a new engine generation (restart, network epoch) replaces
+      // every secret. Every accepted connection must still present it.
       final bluetooth = await RawServerSocket.bind(
         InternetAddress.loopbackIPv4,
         0,
       );
       _bluetoothIngressPort = bluetooth.port;
+      _bluetoothIngressPreface = LoopbackPreface.newToken();
       _servers.add(bluetooth);
-      _listen(bluetooth, generation, transport: PeerTransport.bluetooth);
+      _listen(
+        bluetooth,
+        generation,
+        transport: PeerTransport.bluetooth,
+        loopbackPreface: _bluetoothIngressPreface,
+      );
       if (!nearbyOnly) {
         try {
           final ipv6 = await RawServerSocket.bind(
@@ -1131,6 +1622,10 @@ class PeerEngine {
     _overlayServers.clear();
     _localWifiIngressPort = null;
     _wifiDirectIngressPort = null;
+    _bluetoothIngressPreface = null;
+    _localWifiIngressPreface = null;
+    _wifiDirectIngressPreface = null;
+    _overlayPrefaces.clear();
     _pendingBulletins.clear();
     for (final server in _servers.toList()) {
       await server.close();
@@ -1223,6 +1718,7 @@ class PeerEngine {
     int generation, {
     PeerTransport? transport,
     String? nativeRouteId,
+    Uint8List? loopbackPreface,
   }) {
     server.listen(
       (socket) {
@@ -1247,6 +1743,12 @@ class PeerEngine {
           try {
             TcpEnrollmentPreface? preface;
             PeerCard? enrolling;
+            LoopbackPrefaceResult? loopback;
+            if (loopbackPreface != null) {
+              // A caller that cannot present the secret within 3 s is dropped
+              // here; the listener itself stays open for the legitimate flow.
+              loopback = await LoopbackPreface.read(socket, loopbackPreface);
+            }
             if (acceptTcpEnrollment && !nearbyOnly && transport == null) {
               preface = await TcpEnrollment.read(socket);
               if (preface.beacon != null) {
@@ -1269,8 +1771,8 @@ class PeerEngine {
               // An unknown key is trusted only for this handshake. No cache or
               // routing state changes until mTLS proves possession of its key.
               enrolling == null ? _serverContext! : _context([enrolling]),
-              subscription: preface?.subscription,
-              bufferedData: preface?.bufferedTls,
+              subscription: loopback?.subscription ?? preface?.subscription,
+              bufferedData: loopback?.bufferedTls ?? preface?.bufferedTls,
               requestClientCertificate: true,
               requireClientCertificate: true,
             );
@@ -1315,6 +1817,14 @@ class PeerEngine {
               if (!admitted) {
                 throw const HandshakeException('Enrollment capacity reached.');
               }
+            }
+            if (enrolling == null &&
+                !_peers.containsKey(id) &&
+                _running &&
+                generation == _generation) {
+              // Beacon v2: a certificate first seen in this device's own
+              // failed probe is admitted only after its owner proves the key.
+              await _serial(() => _admitDiscoveryCandidate(id));
             }
             if (!_running ||
                 generation != _generation ||
@@ -1463,7 +1973,7 @@ class PeerEngine {
     RawSecureSocket? socket;
     try {
       final address = endpoint.host;
-      final ({InternetAddress host, int port}) destination;
+      final ({InternetAddress host, int port, Uint8List? preface}) destination;
       if (nearbyOnly && endpoint.transport != PeerTransport.bluetooth) {
         final transport = localWifiTransport;
         if (transport == null) throw StateError('local_wifi_unavailable');
@@ -1472,7 +1982,11 @@ class PeerEngine {
           throw StateError('local_wifi_proxy_invalid');
         }
       } else {
-        destination = (host: address, port: endpoint.port);
+        destination = (
+          host: address,
+          port: endpoint.port,
+          preface: endpoint.preface,
+        );
       }
       if (!_running || generation != _generation) return;
       raw = await RawSocket.connect(
@@ -1487,6 +2001,19 @@ class PeerEngine {
       _handshakes.add(raw);
       var expired = false;
       StreamSubscription<RawSocketEvent>? enrollmentSubscription;
+      final loopbackPreface = destination.preface;
+      if (loopbackPreface != null) {
+        // Native and overlay loopback proxies require their private per-flow
+        // preface before any TLS byte (see LoopbackPreface).
+        enrollmentSubscription = await LoopbackPreface.write(
+          raw,
+          loopbackPreface,
+        );
+        if (!_running || generation != _generation) {
+          await raw.close();
+          return;
+        }
+      }
       if (endpoint.tcpEnrollment &&
           !nearbyOnly &&
           (endpoint.transport == PeerTransport.ip ||
@@ -3356,6 +3883,7 @@ class _Endpoint {
     this.expiresAtMs,
     this.durable = false,
     this.tcpEnrollment = false,
+    this.preface,
   });
   final String peerId, routeId;
   final PeerTransport transport;
@@ -3363,6 +3891,9 @@ class _Endpoint {
   final int port, availableSinceMs;
   final bool durable;
   final bool tcpEnrollment;
+
+  /// Loopback preface for native/overlay proxies; never serialized.
+  final Uint8List? preface;
   int? expiresAtMs;
   int failures = 0;
   int nextAttemptMs = 0;
@@ -3373,6 +3904,40 @@ class _NativeRoute {
   const _NativeRoute(this.peerId, this.transport);
   final String peerId;
   final PeerTransport transport;
+}
+
+class _SessionPeer {
+  _SessionPeer(this.peerId, this.expiresAtMs);
+  final String peerId;
+  int expiresAtMs;
+}
+
+class _DiscoveryCandidate {
+  const _DiscoveryCandidate(
+    this.card,
+    this.session,
+    this.host,
+    this.port,
+    this.expiresAtMs,
+  );
+  final PeerCard card;
+  final String session;
+  final InternetAddress host;
+  final int port;
+  final int expiresAtMs;
+}
+
+class _ProbeBudget {
+  _ProbeBudget(this.windowStartMs);
+  final int windowStartMs;
+  int count = 0;
+}
+
+class _ProbeBackoff {
+  const _ProbeBackoff(this.failures, this.nextAttemptMs, this.recordedAtMs);
+  final int failures;
+  final int nextAttemptMs;
+  final int recordedAtMs;
 }
 
 class _DiscoveryHint {

@@ -27,6 +27,7 @@ import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -58,8 +59,11 @@ final class LocalWifiTransport {
   private final Map<String, Long> probeTimes = new LinkedHashMap<>();
   private final Map<String, Long> admissionDiagnosticTimes = new HashMap<>();
   private final LocalWifiIngressBudget ingressBudget = new LocalWifiIngressBudget();
+  private final SecureRandom random = new SecureRandom();
   private volatile boolean running;
   private volatile byte[] beacon = new byte[0];
+  // Engine-issued secrets for its loopback ingress listeners; see LoopbackPreface.
+  private volatile byte[] ingressPreface = new byte[0], wifiDirectIngressPreface = new byte[0];
   private ExecutorService io;
   private int generation, tcpPort, ingressPort, wifiDirectIngressPort, discoveryPort;
   private long lastAnnouncement;
@@ -89,17 +93,21 @@ final class LocalWifiTransport {
   };
 
   synchronized void start(int tcpPort, int ingressPort, int wifiDirectIngressPort,
-      int discoveryPort, byte[] signedBeacon) throws IOException {
+      int discoveryPort, byte[] signedBeacon, byte[] ingressPreface,
+      byte[] wifiDirectIngressPreface) throws IOException {
     stop();
     if (!validPort(tcpPort) || !validPort(ingressPort) || !validPort(wifiDirectIngressPort)
         || !validPort(discoveryPort) || signedBeacon == null
-        || signedBeacon.length == 0 || signedBeacon.length > 4096 || connectivity == null) {
+        || signedBeacon.length == 0 || signedBeacon.length > 4096 || connectivity == null
+        || !LoopbackPreface.valid(ingressPreface) || !LoopbackPreface.valid(wifiDirectIngressPreface)) {
       throw new IllegalArgumentException("Invalid local Wi-Fi configuration");
     }
     this.tcpPort = tcpPort;
     this.ingressPort = ingressPort;
     this.wifiDirectIngressPort = wifiDirectIngressPort;
     this.discoveryPort = discoveryPort;
+    this.ingressPreface = ingressPreface.clone();
+    this.wifiDirectIngressPreface = wifiDirectIngressPreface.clone();
     beacon = signedBeacon.clone();
     running = true;
     generation++;
@@ -134,7 +142,11 @@ final class LocalWifiTransport {
 
   synchronized boolean isRunning() { return running; }
 
-  /** Returned proxy is single-use, loopback-only, bounded, and expires after 8s. */
+  /**
+   * Returned proxy is single-use, loopback-only, bounded, and expires after 8s.
+   * Its per-flow preface travels back only over the platform channel; the
+   * Dart dialer writes it before TLS and a wrong local caller cannot steal it.
+   */
   synchronized Map<String, Object> openPeer(String host, int port) throws IOException {
     if (!running) {
       admissionDiagnostic("open_stopped");
@@ -166,13 +178,15 @@ final class LocalWifiTransport {
     try {
       ServerSocket endpoint = new ServerSocket();
       flow.endpoint = endpoint;
-      endpoint.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 1);
-      endpoint.setSoTimeout(8000);
+      flow.preface = LoopbackPreface.newToken(random);
+      flow.deadlineMs = SystemClock.elapsedRealtime() + 8000;
+      endpoint.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), LoopbackPreface.BACKLOG);
       submit(() -> attachOutbound(flow, remote, port));
       Map<String, Object> result = new HashMap<>();
       result.put("host", "127.0.0.1");
       result.put("port", endpoint.getLocalPort());
       result.put("transport", domain.transport);
+      result.put("preface", flow.preface.clone());
       return result;
     } catch (IOException | RuntimeException error) {
       closeFlow(flow);
@@ -237,6 +251,8 @@ final class LocalWifiTransport {
     probeTimes.clear();
     ingressBudget.reset();
     beacon = new byte[0];
+    ingressPreface = new byte[0];
+    wifiDirectIngressPreface = new byte[0];
     if (io != null) io.shutdownNow();
     io = null;
     emit(snapshot());
@@ -392,16 +408,20 @@ final class LocalWifiTransport {
         if (!flow.current()) { close(local); closeFlow(flow); return; }
         flow.local = local;
       }
-      local.connect(new InetSocketAddress("127.0.0.1",
-          flow.domain.network == null ? wifiDirectIngressPort : ingressPort), 5000);
+      boolean direct = flow.domain.network == null;
+      local.connect(new InetSocketAddress("127.0.0.1", direct ? wifiDirectIngressPort : ingressPort), 5000);
+      // Prove in-process origin to the engine's loopback ingress before TLS.
+      LoopbackPreface.write(local, direct ? wifiDirectIngressPreface : ingressPreface);
       pump(flow);
     } catch (IOException | RuntimeException error) { closeFlow(flow); }
   }
 
   private void attachOutbound(Flow flow, InetAddress remoteAddress, int port) {
     try {
-      Socket local = flow.endpoint.accept();
-      close(flow.endpoint);
+      // Keeps listening after a wrong local caller until the 8s flow deadline;
+      // closes the listener once a caller proves the per-flow preface.
+      Socket local = LoopbackPreface.accept(flow.endpoint, flow.preface, flow.deadlineMs,
+          SystemClock::elapsedRealtime);
       synchronized (this) {
         if (!flow.current() || !local.getInetAddress().isLoopbackAddress()) { close(local); closeFlow(flow); return; }
         flow.local = local;
@@ -638,6 +658,8 @@ final class LocalWifiTransport {
     volatile boolean closed;
     ServerSocket endpoint;
     Socket local, remote;
+    byte[] preface;
+    long deadlineMs;
     Flow(Domain domain, boolean incoming) { this.domain = domain; this.incoming = incoming; }
     boolean current() { return !closed && domain.current(); }
   }

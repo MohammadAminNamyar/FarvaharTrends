@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:persian_trend/core/delivery_mode.dart';
 import 'package:persian_trend/core/identity.dart';
 import 'package:persian_trend/core/local_wifi_transport.dart';
+import 'package:persian_trend/core/loopback_preface.dart';
 import 'package:persian_trend/core/models.dart';
 import 'package:persian_trend/core/peer_discovery.dart';
 import 'package:persian_trend/core/peer_engine.dart';
@@ -355,6 +357,8 @@ class _WifiGate implements LocalWifiTransport {
     required int wifiDirectIngressPort,
     required int discoveryPort,
     required Uint8List signedBeacon,
+    required Uint8List ingressPreface,
+    required Uint8List wifiDirectIngressPreface,
     required void Function(Uint8List, InternetAddress) onBeacon,
     required void Function(String?) onState,
   }) async {
@@ -365,19 +369,49 @@ class _WifiGate implements LocalWifiTransport {
     directIngress = wifiDirectIngressPort;
   }
 
+  /// Simulates the native single-use loopback proxy: the engine must present
+  /// the per-flow preface before its TLS bytes are relayed to [allowedPort].
   @override
-  Future<({InternetAddress host, int port})> open(
+  Future<({InternetAddress host, int port, Uint8List preface})> open(
     InternetAddress host,
     int port,
   ) async {
     openHosts.add(host.address);
     if (invalidProxy) {
-      return (host: InternetAddress('203.0.113.10'), port: port);
+      return (
+        host: InternetAddress('203.0.113.10'),
+        port: port,
+        preface: LoopbackPreface.newToken(),
+      );
     }
     if (!available || allowedPort == null || host.address != '192.168.20.2') {
       throw StateError('not on WiFi link');
     }
-    return (host: InternetAddress.loopbackIPv4, port: allowedPort!);
+    final token = LoopbackPreface.newToken();
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    unawaited(
+      LoopbackPreface.acceptOnce(
+        server,
+        token,
+        deadline: const Duration(seconds: 8),
+      ).then((flow) async {
+        final target = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          allowedPort!,
+        );
+        unawaited(
+          target.addStream(flow.data).catchError((Object _) {
+            target.destroy();
+          }),
+        );
+        unawaited(
+          flow.socket.addStream(target).catchError((Object _) {
+            flow.socket.destroy();
+          }),
+        );
+      }).catchError((Object _) {}),
+    );
+    return (host: InternetAddress.loopbackIPv4, port: server.port, preface: token);
   }
 
   @override

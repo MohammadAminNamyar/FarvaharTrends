@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_pear/flutter_pear.dart';
 
+import 'core/loopback_preface.dart';
 import 'core/overlay_frames.dart';
 import 'core/peer_engine.dart';
 import 'core/network_epoch.dart';
@@ -12,10 +13,29 @@ import 'core/network_epoch.dart';
 /// Hyperswarm discovers connection identities, then carries the existing TLS
 /// protocol. A discovered peer gains no publisher trust or subscriptions.
 class InternetOverlay {
-  InternetOverlay(this.engine, {required this.onState, this.networkKey});
+  InternetOverlay(
+    this.engine, {
+    required this.onState,
+    this.networkKey,
+    this.announce = true,
+    this.dhtBootstrap = const [],
+    this.dhtEphemeral = true,
+  });
   final PeerEngine engine;
   final void Function(Map<String, dynamic>) onState;
   final Future<String?> Function()? networkKey;
+
+  /// Announce this device on the public topic (default). `false` only finds
+  /// announced peers and is itself undiscoverable; see [PearSwarm.join].
+  final bool announce;
+
+  /// Operator DHT bootstrap nodes as `host:port` (public IPv4, at most 16),
+  /// consulted before cached nodes and the hyperdht defaults.
+  final List<String> dhtBootstrap;
+
+  /// `true` (default): never a DHT routing node for strangers and never
+  /// reported as a reachable helper. `false` opts a reachable device in.
+  final bool dhtEphemeral;
   final NetworkEpoch _networkEpoch = NetworkEpoch();
   Future<void>? _stopping;
   static const namespace = String.fromEnvironment(
@@ -60,7 +80,13 @@ class InternetOverlay {
       pear.lifecycle.policy = PearLifecyclePolicy.manual;
       final topic = PearCrypto.hash(Uint8List.fromList(utf8.encode(namespace)));
       _topic = topic;
-      final swarm = await pear.join(topic, acceptUnannounced: true);
+      final swarm = await pear.join(
+        topic,
+        acceptUnannounced: true,
+        announce: announce,
+        dhtBootstrap: dhtBootstrap,
+        dhtEphemeral: dhtEphemeral,
+      );
       if (!_current(generation)) {
         await pear.dispose();
         return;
@@ -168,6 +194,8 @@ class InternetOverlay {
           'cachedRoutingCount': network['cachedRoutingCount'],
           'cachedPeerCount': network['cachedPeerCount'],
           'reachableHelper': network['reachableHelper'],
+          'dhtEphemeral': network['dhtEphemeral'] ?? network['ephemeral'],
+          'announce': network['announce'],
         });
       }
     } catch (_) {
@@ -243,6 +271,7 @@ class _OverlayRoute {
   bool remoteReady = false;
   bool bridgeStarted = false;
   int? ingress;
+  Uint8List? ingressPreface;
   int queuedBytes = 0;
   final pendingData = <Uint8List>[];
   int pendingBytes = 0;
@@ -337,6 +366,12 @@ class _OverlayRoute {
       }
       peerId = admission.peerId;
       ingress = admission.ingressPort;
+      // The engine's loopback ingress preface; in-process only, never logged.
+      ingressPreface = admission.ingressPreface;
+      if (!LoopbackPreface.valid(ingressPreface)) {
+        await close();
+        return;
+      }
       if (value['helperNode'] is Map<String, dynamic>) {
         helperNode = value['helperNode'] as Map<String, dynamic>;
       }
@@ -384,19 +419,33 @@ class _OverlayRoute {
         await listener.close();
         return;
       }
-      listener.listen((accepted) {
-        if (!current || socket != null) {
-          accepted.destroy();
-          return;
-        }
-        attach(accepted);
-      }, onError: (Object _) => unawaited(close()));
+      // Single-use loopback flow: the engine dials with this preface, which
+      // only travels in-process. A wrong local caller is dropped while the
+      // listener keeps waiting for the engine until the flow deadline.
+      final preface = LoopbackPreface.newToken();
+      unawaited(
+        LoopbackPreface.acceptOnce(
+          listener,
+          preface,
+          deadline: const Duration(seconds: 30),
+        ).then(
+          (flow) {
+            if (!current || socket != null) {
+              flow.socket.destroy();
+              return;
+            }
+            attach(flow.socket, incoming: flow.data);
+          },
+          onError: (Object _) => unawaited(close()),
+        ),
+      );
       await owner.engine.registerNativeEndpoint(
         peerId: peerId!,
         routeId: routeId,
         transport: PeerTransport.overlay,
         host: InternetAddress.loopbackIPv4,
         port: listener.port,
+        preface: preface,
       );
     } else {
       final connected = await Socket.connect(
@@ -408,11 +457,13 @@ class _OverlayRoute {
         connected.destroy();
         return;
       }
+      // Prove in-process origin to the engine's ingress before any TLS byte.
+      connected.add(ingressPreface!);
       attach(connected);
     }
   }
 
-  void attach(Socket connected) {
+  void attach(Socket connected, {Stream<Uint8List>? incoming}) {
     socket = connected;
     connected.setOption(SocketOption.tcpNoDelay, true);
     for (final bytes in pendingData) {
@@ -421,7 +472,7 @@ class _OverlayRoute {
     pendingData.clear();
     pendingBytes = 0;
     late final StreamSubscription<Uint8List> outgoing;
-    outgoing = connected.listen(
+    outgoing = (incoming ?? connected).listen(
       (bytes) {
         outgoing.pause();
         unawaited(() async {

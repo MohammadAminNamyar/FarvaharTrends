@@ -56,7 +56,9 @@ public final class WiFiDirectTransport {
   private static final long REFRESH_MS = 30000L;
   private static final long CONNECT_TIMEOUT_MS = 45000L;
   private static final long GROUP_QUERY_TIMEOUT_MS = 15000L;
-  private static final Pattern ID_PATTERN = Pattern.compile("[0-9a-f]{64}");
+  // Beacon v2: the TXT record carries a rotating 16-byte session token, never
+  // the certificate fingerprint. It is a service hint and tie-breaker only.
+  private static final Pattern SESSION_PATTERN = Pattern.compile("[0-9a-f]{32}");
   private static final Pattern MAC_PATTERN = Pattern.compile("(?:[0-9a-f]{2}:){5}[0-9a-f]{2}");
 
   private final Context context;
@@ -74,7 +76,7 @@ public final class WiFiDirectTransport {
   private boolean autoConnectAllowed;
   private int generation;
   private int registrationSerial, groupSerial;
-  private String identityId = "";
+  private String sessionToken = "";
   private int tcpPort;
   private String state = "stopped";
   private String lastError;
@@ -143,18 +145,19 @@ public final class WiFiDirectTransport {
     updateConditions();
   }
 
-  public void start(String identityId, int tcpPort) {
+  /** {@code sessionToken} is the engine's rotating discovery session token (32 hex). */
+  public void start(String sessionToken, int tcpPort) {
     requireMainThread();
-    if (identityId == null || !ID_PATTERN.matcher(identityId).matches()
+    if (sessionToken == null || !SESSION_PATTERN.matcher(sessionToken).matches()
         || tcpPort < 1 || tcpPort > 65535) {
-      throw new IllegalArgumentException("A public identity fingerprint and valid TCP port are required");
+      throw new IllegalArgumentException("A discovery session token and valid TCP port are required");
     }
-    if (active && this.identityId.equals(identityId) && this.tcpPort == tcpPort) {
+    if (active && this.sessionToken.equals(sessionToken) && this.tcpPort == tcpPort) {
       refresh();
       return;
     }
     stopInternal(false);
-    this.identityId = identityId;
+    this.sessionToken = sessionToken;
     this.tcpPort = tcpPort;
     active = true;
     generation++;
@@ -329,20 +332,20 @@ public final class WiFiDirectTransport {
           },
           (domain, records, device) -> {
             if (!current(token) || !isAppDomain(domain)) return;
-            String id = validIdentity(records);
+            String session = validSession(records);
             int port = validPort(records);
-            if (id == null || id.equals(this.identityId) || port == 0) return;
+            if (session == null || session.equals(this.sessionToken) || port == 0) return;
             Candidate candidate = candidateFor(device);
             if (candidate == null) return;
-            candidate.id = id;
+            candidate.session = session;
             candidate.port = port;
             candidate.txtSeenAt = SystemClock.elapsedRealtime();
             serviceObserved();
           });
       Map<String, String> txt = new HashMap<>();
       txt.put("app", "persiantrend");
-      txt.put("v", "1");
-      txt.put("id", identityId);
+      txt.put("v", "2");
+      txt.put("sid", sessionToken);
       txt.put("port", Integer.toString(tcpPort));
       localService = WifiP2pDnsSdServiceInfo.newInstance(INSTANCE, SERVICE_TYPE, txt);
       // The Android service-discovery API's generic DNS-SD request provides both
@@ -453,7 +456,7 @@ public final class WiFiDirectTransport {
   private boolean matchesCandidate(String address, long now) {
     Candidate candidate = candidates.get(address);
     return candidate != null && candidate.complete(now)
-        && !candidate.id.equals(identityId);
+        && !candidate.session.equals(sessionToken);
   }
 
   private void advance() {
@@ -562,9 +565,10 @@ public final class WiFiDirectTransport {
     long now = SystemClock.elapsedRealtime();
     Candidate selected = null;
     for (Candidate candidate : candidates.values()) {
-      if (!candidate.complete(now) || identityId.compareTo(candidate.id) >= 0
+      // Session tokens are random per side, so this order is a fair, unlinkable tie-break.
+      if (!candidate.complete(now) || sessionToken.compareTo(candidate.session) >= 0
           || !attemptBudget.canAttempt(candidate.address, now)) continue;
-      if (selected == null || candidate.id.compareTo(selected.id) < 0) selected = candidate;
+      if (selected == null || candidate.session.compareTo(selected.session) < 0) selected = candidate;
     }
     if (selected == null) return;
     // Recheck for another app's group just before requesting a connection.
@@ -777,15 +781,16 @@ public final class WiFiDirectTransport {
         || (INSTANCE + "." + SERVICE_TYPE).equals(normalized);
   }
 
-  static String validIdentity(Map<String, String> records) {
+  /** TXT v2: {@code sid} is a rotating session token; a v1 {@code id} fingerprint is no longer accepted. */
+  static String validSession(Map<String, String> records) {
     if (records == null || records.size() > 8 || !"persiantrend".equals(records.get("app"))
-        || !"1".equals(records.get("v"))) return null;
-    String id = records.get("id");
-    return id != null && ID_PATTERN.matcher(id).matches() ? id : null;
+        || !"2".equals(records.get("v")) || records.containsKey("id")) return null;
+    String session = records.get("sid");
+    return session != null && SESSION_PATTERN.matcher(session).matches() ? session : null;
   }
 
   static int validPort(Map<String, String> records) {
-    if (validIdentity(records) == null) return 0;
+    if (validSession(records) == null) return 0;
     String port = records.get("port");
     if (port == null || !port.matches("[0-9]{1,5}")) return 0;
     try {
@@ -850,13 +855,13 @@ public final class WiFiDirectTransport {
 
   private static final class Candidate {
     final String address;
-    String id = "";
+    String session = "";
     int port;
     long serviceSeenAt = -CANDIDATE_LIFETIME_MS - 1;
     long txtSeenAt = -CANDIDATE_LIFETIME_MS - 1;
     Candidate(String address) { this.address = address; }
     boolean complete(long now) {
-      return !id.isEmpty() && port > 0 && now - serviceSeenAt <= CANDIDATE_LIFETIME_MS
+      return !session.isEmpty() && port > 0 && now - serviceSeenAt <= CANDIDATE_LIFETIME_MS
           && now - txtSeenAt <= CANDIDATE_LIFETIME_MS;
     }
   }

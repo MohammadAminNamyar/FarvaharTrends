@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:persian_trend/core/channels.dart';
 import 'package:persian_trend/core/identity.dart';
+import 'package:persian_trend/core/loopback_preface.dart';
 import 'package:persian_trend/core/models.dart';
 import 'package:persian_trend/core/peer_discovery.dart';
 import 'package:persian_trend/core/peer_engine.dart';
@@ -72,18 +73,32 @@ void main() {
     }
   }
 
-  Future<SecureSocket> client(Identity local, Identity remote, int port) =>
-      SecureSocket.connect(
-        InternetAddress.loopbackIPv4,
-        port,
-        context: SecurityContext(withTrustedRoots: false)
-          ..useCertificateChainBytes(utf8.encode(local.certPem))
-          ..usePrivateKeyBytes(utf8.encode(local.keyPem))
-          ..setTrustedCertificatesBytes(utf8.encode(remote.certPem)),
-        onBadCertificate: (certificate) =>
-            Identity.certificateId(certificate.pem) == remote.id,
-        timeout: const Duration(seconds: 3),
-      );
+  /// Dials a listener; a loopback ingress needs its [preface] before TLS.
+  Future<SecureSocket> client(
+    Identity local,
+    Identity remote,
+    int port, {
+    Uint8List? preface,
+  }) async {
+    final socket = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      port,
+      timeout: const Duration(seconds: 3),
+    );
+    if (preface != null) {
+      socket.add(preface);
+      await socket.flush();
+    }
+    return SecureSocket.secure(
+      socket,
+      context: SecurityContext(withTrustedRoots: false)
+        ..useCertificateChainBytes(utf8.encode(local.certPem))
+        ..usePrivateKeyBytes(utf8.encode(local.keyPem))
+        ..setTrustedCertificatesBytes(utf8.encode(remote.certPem)),
+      onBadCertificate: (certificate) =>
+          Identity.certificateId(certificate.pem) == remote.id,
+    ).timeout(const Duration(seconds: 3));
+  }
   Future<void> frame(
     SecureSocket socket,
     String type,
@@ -181,7 +196,10 @@ void main() {
       routeId: 'lower-priority-ingress',
       transport: PeerTransport.bluetooth,
     );
-    final proxy = await _ByteProxy.open(right.bluetoothIngressPort!);
+    final proxy = await _ByteProxy.open(
+      right.bluetoothIngressPort!,
+      right.bluetoothIngressPreface!,
+    );
     proxies.add(proxy);
     await left.registerNativeEndpoint(
       peerId: b.id,
@@ -189,6 +207,7 @@ void main() {
       transport: PeerTransport.bluetooth,
       host: InternetAddress.loopbackIPv4,
       port: proxy.port,
+      preface: proxy.token,
     );
     await Future<void>.delayed(const Duration(milliseconds: 100));
     expect((await left.snapshot())['connectedCount'], 1);
@@ -215,7 +234,11 @@ void main() {
     );
     expect(admitted.accepted, true);
     expect(incoming.ingressPort, right.bluetoothIngressPort);
-    final proxy = await _ByteProxy.open(right.bluetoothIngressPort!);
+    expect(incoming.ingressPreface, right.bluetoothIngressPreface);
+    final proxy = await _ByteProxy.open(
+      right.bluetoothIngressPort!,
+      incoming.ingressPreface!,
+    );
     proxies.add(proxy);
     await left.registerNativeEndpoint(
       peerId: b.id,
@@ -223,6 +246,7 @@ void main() {
       transport: PeerTransport.bluetooth,
       host: InternetAddress.loopbackIPv4,
       port: proxy.port,
+      preface: proxy.token,
     );
     await until(() async => (await left.snapshot())['connectedCount'] == 1);
     expect(
@@ -280,7 +304,12 @@ void main() {
       sequence: 1,
       channelId: channel.id,
     );
-    final first = await client(a, b, receiver.bluetoothIngressPort!);
+    final first = await client(
+      a,
+      b,
+      receiver.bluetoothIngressPort!,
+      preface: receiver.bluetoothIngressPreface,
+    );
     first.listen((_) {}, onError: (Object _) {});
     await frame(first, 'channel', channel.toJson());
     await frame(first, 'bulletin', bulletin.toJson());
@@ -363,6 +392,18 @@ void main() {
         transport: PeerTransport.bluetooth,
         host: InternetAddress('192.0.2.1'),
         port: 12345,
+        preface: LoopbackPreface.newToken(),
+      ),
+      throwsArgumentError,
+    );
+    // A loopback endpoint without its native preface is refused as well.
+    await expectLater(
+      value.registerNativeEndpoint(
+        peerId: b.id,
+        routeId: 'bound',
+        transport: PeerTransport.bluetooth,
+        host: InternetAddress.loopbackIPv4,
+        port: 12345,
       ),
       throwsArgumentError,
     );
@@ -375,7 +416,12 @@ void main() {
       PeerCard(name: 'Manually paired', certificatePem: a.certPem),
     );
     await value.start(activeMode: false);
-    final socket = await client(a, b, value.bluetoothIngressPort!);
+    final socket = await client(
+      a,
+      b,
+      value.bluetoothIngressPort!,
+      preface: value.bluetoothIngressPreface,
+    );
     socket.listen((_) {}, onError: (Object _) {});
     await Future<void>.delayed(const Duration(milliseconds: 100));
     expect((await value.snapshot())['connectedCount'], 0);
@@ -482,6 +528,7 @@ void main() {
           transport: PeerTransport.bluetooth,
           host: InternetAddress.loopbackIPv4,
           port: 1,
+          preface: LoopbackPreface.newToken(),
         );
       }
       final peer = ((await value.snapshot())['peers'] as List).single as Map;
@@ -513,9 +560,13 @@ void main() {
         if (event == RawSocketEvent.read) {
           Datagram? packet;
           while ((packet = sender.receive()) != null) {
+            // Replies are v2 session beacons; the certificate stays private.
             expect(
-              PeerDiscovery.parseBeacon(packet!.data, packet.address).id,
-              a.id,
+              PeerDiscovery.parseSessionBeacon(
+                packet!.data,
+                packet.address,
+              ).session,
+              discovery.session.token,
             );
             replies++;
           }
@@ -549,25 +600,33 @@ void main() {
 }
 
 /// Simulates a native byte tunnel only. It does not exercise a Bluetooth radio.
+/// Like the native bridge it demands its own preface from the dialing engine
+/// and presents the ingress preface to the receiving engine.
 class _ByteProxy {
   _ByteProxy(this.server);
   final ServerSocket server;
   final List<Socket> sockets = [];
+  final Uint8List token = LoopbackPreface.newToken();
   int get port => server.port;
-  static Future<_ByteProxy> open(int ingressPort) async {
+  static Future<_ByteProxy> open(
+    int ingressPort,
+    Uint8List ingressPreface,
+  ) async {
     final result = _ByteProxy(
       await ServerSocket.bind(InternetAddress.loopbackIPv4, 0),
     );
     result.server.listen((client) async {
       result.sockets.add(client);
       try {
+        final data = await LoopbackPreface.readStream(client, result.token);
         final target = await Socket.connect(
           InternetAddress.loopbackIPv4,
           ingressPort,
         );
         result.sockets.add(target);
+        target.add(ingressPreface);
         unawaited(
-          target.addStream(client).catchError((Object _) {
+          target.addStream(data).catchError((Object _) {
             target.destroy();
           }),
         );

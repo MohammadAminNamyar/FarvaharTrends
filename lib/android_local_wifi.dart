@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:pilot_platform/pilot_platform.dart';
 
 import 'core/local_wifi_transport.dart';
+import 'core/loopback_preface.dart';
 
 /// Android transports opaque TLS bytes over native sockets bound to a real
 /// on-link Wi-Fi network. Dart never opens a remote socket in nearby mode.
@@ -20,6 +21,8 @@ class AndroidLocalWifiTransport implements LocalWifiTransport {
     required int wifiDirectIngressPort,
     required int discoveryPort,
     required Uint8List signedBeacon,
+    required Uint8List ingressPreface,
+    required Uint8List wifiDirectIngressPreface,
     required void Function(Uint8List, InternetAddress) onBeacon,
     required void Function(String?) onState,
   }) async {
@@ -51,6 +54,8 @@ class AndroidLocalWifiTransport implements LocalWifiTransport {
         wifiDirectIngressPort: wifiDirectIngressPort,
         discoveryPort: discoveryPort,
         signedBeacon: signedBeacon,
+        ingressPreface: ingressPreface,
+        wifiDirectIngressPreface: wifiDirectIngressPreface,
       );
     } catch (_) {
       await stop();
@@ -67,7 +72,7 @@ class AndroidLocalWifiTransport implements LocalWifiTransport {
       PilotPlatform.probeLocalWifi(address.address, port: _discoveryPort);
 
   @override
-  Future<({InternetAddress host, int port})> open(
+  Future<({InternetAddress host, int port, Uint8List preface})> open(
     InternetAddress host,
     int port,
   ) async {
@@ -77,14 +82,17 @@ class AndroidLocalWifiTransport implements LocalWifiTransport {
     );
     final proxy = InternetAddress.tryParse(result['host'] as String? ?? '');
     final proxyPort = result['port'];
+    // The per-flow preface arrives only on the private platform channel.
+    final preface = result['preface'];
     if (proxy == null ||
         !proxy.isLoopback ||
         proxyPort is! int ||
         proxyPort < 1 ||
-        proxyPort > 65535) {
+        proxyPort > 65535 ||
+        !LoopbackPreface.valid(preface)) {
       throw StateError('Invalid local Wi-Fi proxy.');
     }
-    return (host: proxy, port: proxyPort);
+    return (host: proxy, port: proxyPort, preface: preface as Uint8List);
   }
 
   @override

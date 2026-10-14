@@ -249,12 +249,23 @@ class PearSwarm {
   ///
   /// A repeat join of a topic this worklet has already joined keeps the first
   /// join's options.
+  ///
+  /// The worklet builds its DHT on the first join, so the DHT options travel
+  /// with it:
+  /// - [dhtBootstrap]: operator bootstrap nodes as `host:port` (public IPv4
+  ///   only, at most 16), tried before cached nodes and the hyperdht defaults.
+  /// - [dhtEphemeral] `true` (the default): this device answers no DHT
+  ///   routing queries for strangers and never becomes a `reachableHelper`.
+  ///   `false` opts in to being a persistent, announced helper node when the
+  ///   DHT finds it reachable.
   static Future<PearSwarm> join(
     PearRpc rpc,
     PearKey topic, {
     Duration joinTimeout = PearSwarmDefaults.joinTimeout,
     bool announce = true,
     bool acceptUnannounced = false,
+    List<String> dhtBootstrap = const [],
+    bool dhtEphemeral = true,
   }) async {
     final swarm = PearSwarm._(rpc, topic);
     swarm._wire();
@@ -262,7 +273,10 @@ class PearSwarm {
     await rpc.call(PearMethod.swarmJoin, {
       'topic': topic.hex,
       if (!announce) 'server': false,
+      'announce': announce,
       if (acceptUnannounced) 'acceptUnannounced': true,
+      if (dhtBootstrap.isNotEmpty) 'bootstrap': List<String>.of(dhtBootstrap),
+      'ephemeral': dhtEphemeral,
     });
     return swarm;
   }

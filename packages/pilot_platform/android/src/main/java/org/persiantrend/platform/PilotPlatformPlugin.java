@@ -184,12 +184,16 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
           Number localTcp = call.argument("tcpPort"), localIngress = call.argument("ingressPort"),
               directIngress = call.argument("wifiDirectIngressPort"), discoveryPort = call.argument("discoveryPort");
           byte[] localBeacon = call.argument("signedBeacon");
-          if (localTcp == null || localIngress == null || directIngress == null || discoveryPort == null) {
+          // Loopback ingress prefaces: private channel only, never logged or reported.
+          byte[] localIngressPreface = call.argument("ingressPreface");
+          byte[] directIngressPreface = call.argument("wifiDirectIngressPreface");
+          if (localTcp == null || localIngress == null || directIngress == null || discoveryPort == null
+              || !LoopbackPreface.valid(localIngressPreface) || !LoopbackPreface.valid(directIngressPreface)) {
             result.error("arguments", "Invalid local Wi-Fi configuration", null); return;
           }
           if (localWifi == null) localWifi = new LocalWifiTransport(context, this::emitTransport);
           localWifi.start(localTcp.intValue(), localIngress.intValue(), directIngress.intValue(),
-              discoveryPort.intValue(), localBeacon);
+              discoveryPort.intValue(), localBeacon, localIngressPreface, directIngressPreface);
           if (wifiDirect != null) wifiDirect.setAutoConnectAllowed(false);
           if (wifiDirect != null) localWifi.updateP2p(wifiDirect.snapshot());
           result.success(null); return;
@@ -215,7 +219,9 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
           byte[] beacon = call.argument("signedBeacon");
           String identityId = call.argument("identityId");
           Number tcpPort = call.argument("tcpPort"), ingressPort = call.argument("bluetoothIngressPort");
-          if (beacon == null || beacon.length > 4096 || identityId == null || tcpPort == null || ingressPort == null) {
+          byte[] bluetoothPreface = call.argument("bluetoothIngressPreface");
+          if (beacon == null || beacon.length > 4096 || identityId == null || tcpPort == null || ingressPort == null
+              || (ingressPort.intValue() > 0 && !LoopbackPreface.valid(bluetoothPreface))) {
             result.error("arguments", "Invalid nearby transport configuration", null); return;
           }
           if (wifiDirect == null) wifiDirect = new WiFiDirectTransport(context, value -> {
@@ -226,7 +232,7 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
           if (bluetooth == null) bluetooth = new BleTransportBridge(context, this::emitTransport);
           bluetooth.setAppVisible(!RESUMED.isEmpty());
           wifiDirect.start(identityId, tcpPort.intValue());
-          if (ingressPort.intValue() > 0) bluetooth.start(beacon, ingressPort.intValue());
+          if (ingressPort.intValue() > 0) bluetooth.start(beacon, ingressPort.intValue(), bluetoothPreface);
           result.success(null); return;
         case "updateNearbyBeacon":
           byte[] updated = call.argument("signedBeacon");
