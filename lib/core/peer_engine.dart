@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'channels.dart';
+import 'connection_budget.dart';
 import 'channel_control.dart';
 import 'channel_key_store.dart';
 import 'channel_recovery.dart';
@@ -221,6 +222,18 @@ class PeerEngine {
     'global_frame_limit',
   };
   final _TrafficWindow _globalTraffic = _TrafficWindow();
+  final _connectionBudget = ConnectionBudget(
+    capacity: maxConnections,
+    limits: const {
+      TrafficResource.ingressBytes: ingressBytesGlobal,
+      TrafficResource.ingressFrames: framesGlobal,
+      TrafficResource.egressBytes: egressBytesGlobal,
+      TrafficResource.requests: requestItemsGlobal,
+      TrafficResource.channels: newChannelsGlobal,
+      TrafficResource.policies: 128,
+      TrafficResource.contacts: helperContactAttemptsGlobal,
+    },
+  );
   final Map<String, _PeerTraffic> _peerTraffic = {};
   late final _penalties = PeerPenalties(
     nowMs: () => _clock.elapsedMilliseconds,
@@ -1479,7 +1492,7 @@ class PeerEngine {
       if (!_running || generation != _generation || link.closed) break;
       final traffic = _traffic(link.peerId);
       if (traffic.window.contactItems >= helperContactAttemptsPerPeer ||
-          _globalTraffic.contactItems >= helperContactAttemptsGlobal) {
+          !_allowGlobal(link, TrafficResource.contacts, 1)) {
         break;
       }
       traffic.window.contactItems++;
@@ -1613,7 +1626,7 @@ class PeerEngine {
     for (final entry in raw) {
       final traffic = _traffic(link.peerId);
       if (traffic.window.contactItems >= helperContactAttemptsPerPeer ||
-          _globalTraffic.contactItems >= helperContactAttemptsGlobal) {
+          !_allowGlobal(link, TrafficResource.contacts, 1)) {
         break;
       }
       traffic.window.contactItems++;
@@ -2339,6 +2352,12 @@ class PeerEngine {
       }
       _drop(existing, 'duplicate_link');
     }
+    _traffic(peer.id);
+    final allowance = _connectionBudget.acquire();
+    if (allowance == null) {
+      unawaited(socket.close());
+      return;
+    }
     final link = _Link(
       socket,
       peer.id,
@@ -2347,6 +2366,7 @@ class PeerEngine {
       routeId: routeId,
       endpointKey: endpointKey,
       connectedAtMs: _clock.elapsedMilliseconds,
+      allowance: allowance,
     );
     link.lastReceivedMs = _clock.elapsedMilliseconds;
     _links[peer.id] = link;
@@ -2395,7 +2415,11 @@ class PeerEngine {
       _reject(link, 'peer_ingress_limit', protocolAbuse: true);
       return;
     }
-    if (_globalTraffic.ingressBytes + bytes.length > ingressBytesGlobal) {
+    if (!_connectionBudget.spend(
+      link.allowance,
+      TrafficResource.ingressBytes,
+      bytes.length,
+    )) {
       _globalTraffic.exhausted = true;
       _reject(link, 'global_ingress_limit');
       return;
@@ -2413,11 +2437,16 @@ class PeerEngine {
           _reject(link, 'peer_rate_limit', protocolAbuse: true);
           return;
         }
-        if (++_globalTraffic.ingressFrames > framesGlobal) {
+        if (!_connectionBudget.spend(
+          link.allowance,
+          TrafficResource.ingressFrames,
+          1,
+        )) {
           _globalTraffic.exhausted = true;
           _reject(link, 'global_frame_limit');
           return;
         }
+        _globalTraffic.ingressFrames++;
         link.processing = link.processing.then((_) async {
           if (link.closed || !_running || !_peers.containsKey(link.peerId)) {
             return;
@@ -2689,7 +2718,7 @@ class PeerEngine {
               ? newChannelsPerPeer ~/ 2
               : newChannelsPerPeer;
           if (traffic.window.newChannels >= channelBudget ||
-              _globalTraffic.newChannels >= newChannelsGlobal) {
+              !_allowGlobal(link, TrafficResource.channels, 1)) {
             _channelsDeferred++;
             return;
           }
@@ -2760,7 +2789,7 @@ class PeerEngine {
         }
         final traffic = _traffic(link.peerId);
         if (traffic.window.channelPolicyAttempts >= 32 ||
-            _globalTraffic.channelPolicyAttempts >= 128) {
+            !_allowGlobal(link, TrafficResource.policies, 1)) {
           return;
         }
         traffic.window.channelPolicyAttempts++;
@@ -2800,7 +2829,7 @@ class PeerEngine {
         }
         final traffic = _traffic(link.peerId);
         if (traffic.window.channelPolicyAttempts >= 32 ||
-            _globalTraffic.channelPolicyAttempts >= 128) {
+            !_allowGlobal(link, TrafficResource.policies, 1)) {
           return;
         }
         traffic.window.channelPolicyAttempts++;
@@ -2909,7 +2938,7 @@ class PeerEngine {
           if (known?.allows(proof) != true) {
             final traffic = _traffic(link.peerId);
             if (traffic.window.channelPolicyAttempts >= 32 ||
-                _globalTraffic.channelPolicyAttempts >= 128) {
+                !_allowGlobal(link, TrafficResource.policies, 1)) {
               return;
             }
             traffic.window.channelPolicyAttempts++;
@@ -3549,10 +3578,17 @@ class PeerEngine {
     final value = _peerTraffic.putIfAbsent(peerId, _PeerTraffic.new);
     value.window.refresh(now, trafficWindow.inMilliseconds);
     _globalTraffic.refresh(now, trafficWindow.inMilliseconds);
+    _connectionBudget.refreshWindow(_globalTraffic.startedAtMs);
     return value;
   }
 
   bool _cooling(String peerId) => _penalties.cooling(peerId);
+
+  bool _allowGlobal(_Link link, TrafficResource resource, int count) {
+    if (_connectionBudget.spend(link.allowance, resource, count)) return true;
+    _globalTraffic.exhausted = true;
+    return false;
+  }
 
   void _discardPublisherObject(_Link link, String reason) {
     final traffic = _traffic(link.peerId);
@@ -3568,10 +3604,7 @@ class PeerEngine {
   bool _allowRequests(_Link link, int count) {
     final traffic = _traffic(link.peerId);
     if (traffic.window.requestItems + count > requestItemsPerPeer ||
-        _globalTraffic.requestItems + count > requestItemsGlobal) {
-      if (_globalTraffic.requestItems + count > requestItemsGlobal) {
-        _globalTraffic.exhausted = true;
-      }
+        !_allowGlobal(link, TrafficResource.requests, count)) {
       // Ignore excess work rather than accusing a relay carrying a large cache.
       // The regular inventory will ask again in a later budget window.
       _requestDeferred++;
@@ -3669,10 +3702,7 @@ class PeerEngine {
     }
     final traffic = _traffic(link.peerId);
     if (traffic.window.egressBytes + bytes.length > egressBytesPerPeer ||
-        _globalTraffic.egressBytes + bytes.length > egressBytesGlobal) {
-      if (_globalTraffic.egressBytes + bytes.length > egressBytesGlobal) {
-        _globalTraffic.exhausted = true;
-      }
+        !_allowGlobal(link, TrafficResource.egressBytes, bytes.length)) {
       // A skipped send remains in the durable cache. Never mark an unsent
       // channel as announced; anti-entropy must be able to catch it up later.
       _egressDeferred++;
@@ -3724,6 +3754,7 @@ class PeerEngine {
   void _drop(_Link link, String reason) {
     if (link.closed) return;
     link.closed = true;
+    _connectionBudget.release(link.allowance);
     link.writer.close();
     unawaited(link.socket.close());
     final ready = link.writeReady;
@@ -3739,7 +3770,7 @@ class PeerEngine {
         _event(
           'disconnected',
           peerId: link.peerId,
-          extra: {'transport': link.transport.name},
+          extra: {'transport': link.transport.name, 'reason': reason},
         ),
       );
     }
@@ -4263,6 +4294,7 @@ class _Link {
     required this.transport,
     required this.routeId,
     required this.connectedAtMs,
+    required this.allowance,
     this.endpointKey,
   });
   final RawSecureSocket socket;
@@ -4272,6 +4304,7 @@ class _Link {
   final String routeId;
   final String? endpointKey;
   final int connectedAtMs;
+  final ConnectionAllowance allowance;
   StreamSubscription<RawSocketEvent>? subscription;
   Completer<void>? writeReady;
   final List<int> buffer = [];

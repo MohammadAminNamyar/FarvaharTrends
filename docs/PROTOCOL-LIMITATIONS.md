@@ -188,12 +188,24 @@ compete for automatic contacts.
 
 Each device enforces local elapsed-time budgets without broadcasting trust choices or accusations. Current experimental defaults per 60-second window are 1 MiB ingress and 600 frames per peer, 4 MiB/2,400 frames globally, 512 KiB egress per peer and 4 MiB globally, and 512 requested object IDs per peer/2,048 globally. Frames remain capped at 32 KiB. Repeated object responses are suppressed for 10 seconds with a bounded cache; budgets survive reconnects in the same engine session. Excess request/egress work is deferred to later inventory reconciliation, which can add delay under load. Ingress overrun can close a connection; global exhaustion alone does not mark an honest peer abusive.
 
-Global ingress budgets are shared, without a reserved allowance for each honest
-connection. Several admitted attackers can consume the global allowance and
-interrupt legitimate traffic until it resets. Cache-retention tests at a paced
-load do not demonstrate delivery under global-budget exhaustion. Such a result
-requires a separate adversarial workload and a reviewed scheduling/admission
-design; changing connection keys must not silently grant unlimited aggregate work.
+Version 0.8.12 splits each aggregate traffic allowance into a shared half and
+eight reserved connection shares. Per active connection, the reserved portions
+are 256 KiB ingress, 150 frames, 256 KiB egress, 128 requested IDs, two new-channel
+attempts, eight authority/policy checks and four contact checks per window.
+Existing per-peer limits still apply. A quiet active connection's reservation
+cannot be spent by another connection. A freed slot retains its spent allowance
+until the same global window resets; a new connection inherits a free slot's
+remaining allowance. Reconnecting or changing keys therefore cannot increase the
+aggregate allowance. Share exhaustion can close ingress without a misconduct
+strike, or defer outbound/request/metadata work for normal reconciliation.
+
+This is resource isolation between active connections, not a promise of fair
+content distribution. An attacker can still occupy connection slots, compete
+for handshake/admission work, or send valid news that consumes a reader's own
+allowance when forwarded. Newly admitted peers may inherit spent slots and need
+to wait for a reset. The design does not distinguish useful news from signed
+spam or provide Sybil resistance. Saturation of the network below TLS and CPU,
+radio or operating-system scheduling can still interrupt delivery.
 
 New channel admissions are limited to 4 attempts per automatic LAN-origin peer, 8 per other peer, and 32 globally per minute; excess metadata can be requested again later on the same TLS connection. Missing-channel news has at most four pending slots per peer, sixteen total, and expires after 45 seconds using a local monotonic clock. Incoming TLS work is limited before cryptographic processing to four concurrent handshakes, sixteen attempts per IPv4 source or IPv6 /64 and sixty-four globally per minute. This leaves room for outgoing connections during an incoming slow-handshake attack. Source-address budgets may also affect multiple legitimate devices behind one address. They do not prevent radio interference or saturation of the underlying network link.
 

@@ -17,6 +17,12 @@ this device and reused for new posts across channels; the composer shows it in
 review instead of asking for it each time. Existing signed posts are unchanged.
 Advanced test-message identifiers are now under a localized Test details control.
 
+Version 0.8.12 reserves a portion of the traffic budget for each active connection,
+so a few busy connections cannot consume all of another connection's allowance.
+Total limits stay unchanged, and connection/key replacement cannot reset the
+aggregate budget. This reduces one source of overload-related disconnections;
+it is not a guarantee against spam or denial of service.
+
 **Experimental software:** delivery during an Iranian Internet shutdown, five-minute delivery, and publisher anonymity have not been established. An independent security audit has not been completed.
 
 ## How it works

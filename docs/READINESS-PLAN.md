@@ -1,8 +1,12 @@
 # Readiness workstreams
 
 This tracks the six requested workstreams. A passing component test is not a
-field result. Each workstream remains open until its listed evidence exists.
-No CI or release automation is part of this work.
+field result. On 14 October 2026 the project owner deferred longer battery and
+background trials, Iranian cross-provider field trials, larger-device trials
+and further routing/spam work, and independent security review from the current
+update. Those items remain unverified follow-up work, rather than release gates
+for 0.8.12. The implementation regressions, final APK checks, source publication
+and APK delivery remain in scope. No CI or release automation is part of this work.
 
 ## 1. Reconnection and delivery
 
@@ -129,12 +133,26 @@ writes was 12,457 ms, including reconnection work. The cache reached 256 posts
 and the largest sampled journal was 1,900,304 bytes. Socket writes still do not
 count accepted spam, and host loopback timing is not a phone/carrier benchmark.
 
-The aggregate-budget regression also passed its recovery extension: after four
+In the 0.8.11 implementation, the aggregate-budget regression passed its recovery
+extension: after four
 senders exhaust the shared frame allowance, an affected fifth peer reconnects
 with the same identity after the fixture's 30-second window resets and delivers
 new signed Persian news to another connected reader. No engine restart, cleared
 store or identity replacement is needed. This checks recovery after the load
 ends; it does not promise delivery while attackers repeatedly exhaust the budget.
+
+The 0.8.12 change addresses that connection-level starvation: half of each global
+traffic budget remains shared, while the other half is reserved across eight
+connection slots. Retired slots keep their spending until the window resets,
+preventing replacement identities from minting aggregate allowance. The new
+TLS regression subjects four senders to the original frame-exhaustion workload
+while a separate writer and reader exchange signed Persian news before reset.
+It fails against the committed 0.8.11 engine and passes with reservations. It
+also verifies that a limited sender can reconnect after reset without losing
+its identity. Component checks cover all seven resource types, stale leases,
+window resets, repeated connection churn and randomized aggregate accounting.
+This protects connection allowances; it does not guarantee that useful content
+wins against many valid spam publishers, or that a fresh peer gains a slot.
 
 The append-failure regression obstructs the journal path only inside a disposable
 fixture. A failed publication cannot enter the in-memory news/outbox, subsequent
@@ -226,3 +244,32 @@ traffic-limit tests passed after extending the aggregate-budget recovery case,
 and static analysis passed. These targeted runs follow the 534-test full-suite
 run above; that earlier full run predates the new continuous-load test. Only tests
 and documentation changed, so the verified 0.8.11 application and APK are unchanged.
+
+The first 0.8.12 full run had 545 passes and one repeated-spam failure: an honest
+connection closed with an incomplete frame while APK compilation was running
+concurrently. That fixture passed in isolation before adjustment. Its synchronous
+transport-key/signature preparation was moved before live connections, avoiding
+test-induced relay event-loop stalls. Its socket reader now accepts only
+newline-terminated frames, while assertions still require the honest links to
+remain connected and deliver during every flood. Application deadlines and the
+offered flood workload were not relaxed. The original close reason was not
+recorded, so it cannot be attributed conclusively to host load; disconnect events
+now retain the bounded local reason code for future diagnosis.
+
+On the final 0.8.12 source, static analysis passed and all 546 Flutter tests passed
+with two workers in 7 minutes 29 seconds, with APK compilation run separately.
+The repeated-spam case delivered all 18 legitimate posts across three rounds and
+a new post after restart; the cache stayed at 256 items or fewer. All 22 overlay
+checks and 18 native JUnit tests in eight suites also passed. These are local
+regression results; the deferred field and independent-review work above remains
+unverified.
+
+Release 0.8.12 was installed in place on the Samsung S21 Ultra (ARM64, version
+code 2023) and the API 36 emulator (x64, version code 4023), using the existing
+signing certificate. The phone APK is 32,261,817 bytes. The existing recovery
+channel published a fresh Persian test post from the emulator; it appeared on
+the Samsung with one local unread item, a valid signature and a saved peer-network
+receive time of 21:12:25 local time. Existing channel rows and earlier news remained
+available. This is a reachable-peer update check, not a new shutdown or carrier
+isolation trial. No app data was cleared and no radio settings were changed.
+Temporary input/dump files were removed from the devices after inspection.

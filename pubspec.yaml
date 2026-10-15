@@ -1,7 +1,7 @@
 name: farvahar_trends
 description: "FarvaharTrends — a signed bulletin delivery pilot with no required central server."
 publish_to: 'none'
-version: 0.8.11+22
+version: 0.8.12+23
 
 environment:
   sdk: ^3.13.4

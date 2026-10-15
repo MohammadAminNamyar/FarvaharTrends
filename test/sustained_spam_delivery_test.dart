@@ -26,7 +26,16 @@ void main() {
     final scratch = await parent.createTemp('sustained-spam-');
     final sockets = <_Client>[];
     final engines = <PeerEngine>[];
+    var completed = false;
     addTearDown(() async {
+      if (!completed) {
+        for (final engine in engines) {
+          final report = jsonDecode(await engine.exportReport()) as Map;
+          stdout.writeln(
+            'SIGNED_SPAM_CONNECTION_FAILURE ${jsonEncode({'closedClients': sockets.map((client) => client.closed).toList(), 'events': report['events']})}',
+          );
+        }
+      }
       for (final client in sockets) {
         client.close();
       }
@@ -47,6 +56,34 @@ void main() {
     ];
     final expected = <SignedBulletin>[];
     final measurements = <Map<String, Object>>[];
+    // Attackers and the relay share this test isolate. Generating RSA keys while
+    // sockets are live freezes the relay's I/O and write deadlines too, unlike
+    // independent devices. Prepare the same workload before starting engines;
+    // verification, admission, storage and delivery still happen under load.
+    final preparation = Stopwatch()..start();
+    final transportsByRound = [
+      for (var round = 0; round < rounds; round++)
+        List.generate(4, (_) => Identity.generate()),
+    ];
+    final spamByRound = [
+      for (var round = 0; round < rounds; round++)
+        [
+          for (var i = 0; i < spamWriters.length; i++)
+            [
+              for (var n = 0; n < 120; n++)
+                SignedBulletin.create(
+                  spamWriters[i],
+                  channelId: spamChannels[i].id,
+                  sequence: round * 120 + n + 1,
+                  runId: 'news',
+                  text: 'فقط پیام آزمایشی؛ خبر واقعی نیست. $round/$i/$n',
+                ),
+            ],
+        ],
+    ];
+    stdout.writeln(
+      'SIGNED_SPAM_PREPARATION ${jsonEncode({'beforeConnections': true, 'elapsedMs': preparation.elapsedMilliseconds})}',
+    );
     final watch = Stopwatch()..start();
 
     PeerEngine makeEngine() {
@@ -111,7 +148,7 @@ void main() {
       // New authenticated connection keys each window exercise identity churn.
       // Signing sources stay fixed, so signature validity can be checked against
       // established channels while the public cache repeatedly turns over.
-      final transports = List.generate(4, (_) => Identity.generate());
+      final transports = transportsByRound[round];
       final attackers = <_Client>[];
       for (var i = 0; i < transports.length; i++) {
         final client = await connect(engine, transports[i]);
@@ -123,21 +160,7 @@ void main() {
         'flood channel admission in round $round',
       );
 
-      // Prepare real valid signatures before timing delivery. Dummy/invalid
-      // payloads would exercise the cheap rejection path instead of storage.
-      final spam = [
-        for (var i = 0; i < spamWriters.length; i++)
-          [
-            for (var n = 0; n < 120; n++)
-              SignedBulletin.create(
-                spamWriters[i],
-                channelId: spamChannels[i].id,
-                sequence: round * 120 + n + 1,
-                runId: 'news',
-                text: 'فقط پیام آزمایشی؛ خبر واقعی نیست. $round/$i/$n',
-              ),
-          ],
-      ];
+      final spam = spamByRound[round];
       final roundPosts = <SignedBulletin>[];
       final sendTimes = <String, int>{};
       final pacedBatchMs = <int>[];
@@ -342,6 +365,7 @@ void main() {
     stdout.writeln(
       'SIGNED_SPAM_RESULT ${jsonEncode({'scope': 'host-loopback-TLS', 'rounds': rounds, 'trafficWindowSeconds': seconds, 'validFloodFramesAttempted': floodFrames, 'validFloodFramesWrittenToSocket': writtenFloodFrames, 'rotatingTransportIdentities': rounds * 4, 'honestPostsDelivered': expected.length, 'cacheEvictions': store.evictions['bulletins'], 'journalBytesAfterReopen': journalBytes, 'restartDelivery': true, 'measurements': measurements})}',
     );
+    completed = true;
   }, timeout: const Timeout(Duration(minutes: 40)));
 }
 
@@ -362,16 +386,25 @@ class _Client {
     socket
         .cast<List<int>>()
         .transform(utf8.decoder)
-        .transform(const LineSplitter())
         .listen(
-          (line) {
-            final frame = jsonDecode(line) as Map;
-            if (frame['type'] == 'inventory') receivedInventory = true;
-            if (frame['type'] == 'bulletin') {
-              arrivals.putIfAbsent(
-                (frame['value'] as Map)['id'] as String,
-                () => watch.elapsedMilliseconds,
-              );
+          (chunk) {
+            // A rejected flooder can close mid-frame. Only newline-terminated
+            // frames are protocol messages; LineSplitter also emits a trailing
+            // fragment at EOF. Honest-link continuity is asserted separately.
+            _buffer += chunk;
+            var newline = _buffer.indexOf('\n');
+            while (newline >= 0) {
+              final line = _buffer.substring(0, newline);
+              _buffer = _buffer.substring(newline + 1);
+              final frame = jsonDecode(line) as Map;
+              if (frame['type'] == 'inventory') receivedInventory = true;
+              if (frame['type'] == 'bulletin') {
+                arrivals.putIfAbsent(
+                  (frame['value'] as Map)['id'] as String,
+                  () => watch.elapsedMilliseconds,
+                );
+              }
+              newline = _buffer.indexOf('\n');
             }
           },
           onError: (Object _) {
@@ -385,6 +418,7 @@ class _Client {
   final SecureSocket socket;
   late final Timer _inventoryTimer;
   Future<bool> _writes = Future<bool>.value(true);
+  String _buffer = '';
   final arrivals = <String, int>{};
   bool receivedInventory = false;
   bool closed = false;

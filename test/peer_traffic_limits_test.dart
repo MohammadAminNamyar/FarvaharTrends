@@ -404,109 +404,124 @@ void main() {
     },
   );
 
-  test(
-    'aggregate budgets bound rejection logs and delivery resumes after reset',
-    () async {
-      final target = engine(window: const Duration(seconds: 30));
-      final identities = [
-        publisher,
-        for (var i = 0; i < 4; i++) Identity.generate(),
-      ];
-      for (final identity in identities) {
-        await pair(target, identity);
+  test('connection reservations preserve honest news during shared-budget pressure', () async {
+    final target = engine(window: const Duration(seconds: 30));
+    final identities = [
+      publisher,
+      for (var i = 0; i < 5; i++) Identity.generate(),
+    ];
+    for (final identity in identities) {
+      await pair(target, identity);
+    }
+    await target.start(activeMode: false);
+    for (final identity in identities) {
+      final client = await connect(target, own: identity);
+      for (var i = 0; i < 32; i++) {
+        await client.want(List.filled(16, '0' * 64));
       }
-      await target.start(activeMode: false);
-      for (final identity in identities) {
-        final client = await connect(target, own: identity);
-        for (var i = 0; i < 32; i++) {
-          await client.want(List.filled(16, '0' * 64));
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      }
-      await until(
-        () async =>
-            ((await target.snapshot())['trafficDeferred'] as Map)['requests'] >
-            0,
-      );
-      expect((await target.snapshot())['connectedCount'], identities.length);
-      expect((await target.snapshot())['coolingPeerCount'], 0);
-      // Five peers sent 32 frames each. Another 4*560 reaches the global
-      // 2400-frame cap while each individual peer remains below 600 frames.
-      for (final client in clients.take(4).toList()) {
-        for (var i = 0; i < 560; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await until(
+      () async =>
+          ((await target.snapshot())['trafficDeferred'] as Map)['requests'] > 0,
+    );
+    expect((await target.snapshot())['connectedCount'], identities.length);
+    expect((await target.snapshot())['coolingPeerCount'], 0);
+    final writer = clients[4];
+    final reader = clients[5];
+    // Six peers sent 32 frames each. Four senders then offer 560 more
+    // frames each: enough to exhaust the old global budget, but each stays
+    // below its own 600-frame cap. Busy connections may now be closed before
+    // they can spend the established writer's/reader's reserved allowance.
+    for (final client in clients.take(4).toList()) {
+      for (var i = 0; i < 560; i++) {
+        if (client.closed) break;
+        try {
           await client.send({
             'type': 'inventory',
             'channels': <String>[],
             'bulletins': <String>[],
             'receipts': <String>[],
           });
-          if (i % 20 == 19) {
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-          }
+        } on SocketException {
+          break;
+        } on StateError {
+          // Socket close can race with the listener's onDone callback.
+          break;
+        }
+        if (i % 20 == 19) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
         }
       }
-      var rejected = clients[4];
-      for (var attempt = 0; attempt < 4; attempt++) {
-        if (attempt > 0) rejected = await connect(target, own: identities.last);
-        await rejected.send({
-          'type': 'inventory',
-          'channels': <String>[],
-          'bulletins': <String>[],
-          'receipts': <String>[],
-        });
-        await until(
-          () async => (await target.snapshot())['rejectedCount'] == attempt + 1,
-        );
-      }
-      final state = await target.snapshot();
-      expect(state['rejectedCount'], 4);
-      expect(state['coolingPeerCount'], 0);
-      expect(state['trafficLogSuppressedCount'], greaterThanOrEqualTo(5));
-      final report = jsonDecode(await target.exportReport()) as Map;
-      final events = (report['events'] as List).cast<Map>();
-      expect(
-        events.where((e) => e['kind'] == 'global_frame_limit'),
-        hasLength(1),
-      );
-      expect(
-        events.where((e) => e['kind'] == 'connected').length,
-        lessThanOrEqualTo(identities.length + 1),
-      );
+    }
+    final channel = SignedChannel.create(
+      identities[4],
+      name: 'خبرهای معتبر هنگام ازدحام',
+    );
+    final news = SignedBulletin.create(
+      identities[4],
+      channelId: channel.id,
+      runId: 'news',
+      sequence: 1,
+      text: 'پیام معتبر بدون انتظار برای پایان ازدحام دریافت می‌شود.',
+    );
+    expect(writer.closed, isFalse);
+    expect(reader.closed, isFalse);
+    await writer.send({'type': 'channel', 'value': channel.toJson()});
+    await writer.send({'type': 'bulletin', 'value': news.toJson()});
+    await until(
+      () async => reader.news.any((f) => (f['value'] as Map)['id'] == news.id),
+    );
+    final state = await target.snapshot();
+    expect(state['rejectedCount'], greaterThan(0));
+    expect(state['coolingPeerCount'], 0);
+    final report = jsonDecode(await target.exportReport()) as Map;
+    final events = (report['events'] as List).cast<Map>();
+    expect(
+      events.where((e) => e['kind'] == 'global_frame_limit'),
+      hasLength(1),
+    );
+    expect(
+      events.where((e) => e['kind'] == 'connected').length,
+      lessThanOrEqualTo(identities.length + 1),
+    );
 
-      // The fifth peer suffered aggregate exhaustion, not its own violation.
-      // Once this fixture's window resets, it can reuse the same identity and
-      // deliver fresh news without restarting the engine or clearing its data.
-      await Future<void>.delayed(const Duration(seconds: 31));
-      final recovered = await connect(target, own: identities.last);
-      await until(
-        () async => recovered.frames.any((f) => f['type'] == 'inventory'),
-      );
-      final channel = SignedChannel.create(
-        identities.last,
-        name: 'آزمایش بازیابی پس از ازدحام',
-      );
-      final news = SignedBulletin.create(
-        identities.last,
-        channelId: channel.id,
-        runId: 'news',
-        sequence: 1,
-        text: 'خبر تازه پس از پایان محدودیت به خواننده می‌رسد.',
-      );
-      await recovered.send({'type': 'channel', 'value': channel.toJson()});
-      await recovered.send({'type': 'bulletin', 'value': news.toJson()});
-      await until(
-        () async => clients.first.frames.any(
-          (frame) =>
-              frame['type'] == 'bulletin' &&
-              (frame['value'] as Map)['id'] == news.id,
-        ),
-      );
-      expect((await target.snapshot())['bulletinCount'], 1);
-      expect((await target.snapshot())['coolingPeerCount'], 0);
-      expect(recovered.closed, isFalse);
-    },
-    timeout: const Timeout(Duration(minutes: 2)),
-  );
+    // A sender rejected for its connection's share was not accused of
+    // protocol abuse. It can reconnect with the same identity after reset.
+    final rejectedIndex = clients.take(4).toList().indexWhere((c) => c.closed);
+    expect(rejectedIndex, greaterThanOrEqualTo(0));
+    await Future<void>.delayed(const Duration(seconds: 31));
+    final recovered = await connect(target, own: identities[rejectedIndex]);
+    await until(
+      () async => recovered.frames.any((f) => f['type'] == 'inventory'),
+    );
+    final recoveredChannel = SignedChannel.create(
+      identities[rejectedIndex],
+      name: 'آزمایش بازیابی پس از ازدحام',
+    );
+    final recoveredNews = SignedBulletin.create(
+      identities[rejectedIndex],
+      channelId: recoveredChannel.id,
+      runId: 'news',
+      sequence: 1,
+      text: 'خبر تازه پس از پایان محدودیت به خواننده می‌رسد.',
+    );
+    await recovered.send({
+      'type': 'channel',
+      'value': recoveredChannel.toJson(),
+    });
+    await recovered.send({'type': 'bulletin', 'value': recoveredNews.toJson()});
+    await until(
+      () async => reader.frames.any(
+        (frame) =>
+            frame['type'] == 'bulletin' &&
+            (frame['value'] as Map)['id'] == recoveredNews.id,
+      ),
+    );
+    expect((await target.snapshot())['bulletinCount'], 2);
+    expect((await target.snapshot())['coolingPeerCount'], 0);
+    expect(recovered.closed, isFalse);
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
 class _Client {
