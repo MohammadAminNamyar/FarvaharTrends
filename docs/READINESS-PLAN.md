@@ -49,8 +49,27 @@ Available: foreground receiving, saved Stop/restart consent, balanced service
 wake locks and emulator process-death/reboot checks. A short locked Samsung
 trial passed, with USB power and screen wake during inspection.
 
-Still required: unplugged 30-minute, two-hour and overnight trials; screen kept
-off; battery saver and OEM restrictions; actual Bluetooth/Wi-Fi Direct pairs;
+On 14 October 2026, the release 0.8.11 Samsung S21 Ultra completed a physically
+unplugged 30-minute receiving trial after the user stopped Telegram streaming.
+The earlier interval with streaming was discarded as an idle battery test.
+Android battery history covers the complete 19:35:31–20:05:31 local interval
+without a screen-on or power-connected transition. It records `screen_doze`
+and light device-idle periods, but no deep device-idle period. The three new
+Persian posts have saved arrival times of 19:44:08, 19:51:06 and 20:05:01 on the
+Samsung, all before
+USB reconnection and screen-on at about 20:07:54. The first planned five-minute
+send was delayed by emulator UI automation to roughly minute 8.6; actual send
+times were retained. No network-latency claim is derived from two device clocks.
+
+Battery history reports 97% at the start and 95% at the end, with approximately
+118 mAh less reported charge. The phone was at 94% when reconnected later.
+These are whole-phone readings without a control trial, not isolated app power
+usage or a battery-life prediction. Wi-Fi and Bluetooth stayed enabled; all
+three details sheets report the peer-network route. The foreground receiving
+service was still active on reconnection. No radio settings were changed.
+
+Still required: repeated 30-minute trials, two-hour and overnight trials;
+battery saver and OEM restrictions; actual Bluetooth/Wi-Fi Direct pairs;
 new-neighbor discovery during sleep. Observe battery charge/current, bytes,
 service lifetime and delivery attempts without collecting private news or
 subscriptions. Keep intentional force-stop effective. Record physical USB
