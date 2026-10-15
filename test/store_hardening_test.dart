@@ -118,6 +118,61 @@ void main() {
     expect(await store.nextSequence(), 3);
   });
 
+  test('failed journal append cannot acknowledge news or reuse a reserved sequence', () async {
+    final channel = SignedChannel.create(local, name: 'Storage failure test');
+    final store = PilotStore(scratch, localOwnerId: local.id);
+    await store.load();
+    await store.putChannel(channel.toJson());
+    Future<SignedBulletin> makeNews(PilotStore target) async =>
+        SignedBulletin.create(
+          local,
+          channelId: channel.id,
+          sequence: await target.nextChannelSequence(channel.id),
+          runId: 'news',
+          text: 'فقط آزمایش خطای ذخیره‌سازی؛ خبر واقعی نیست.',
+        );
+    Future<void> publish(PilotStore target, SignedBulletin news) =>
+        target.putPublication(news.toJson(), {
+          'id': news.id,
+          'channelId': channel.id,
+          'recipients': <String>[],
+        });
+    final committed = await makeNews(store);
+    await publish(store, committed);
+    final failed = await makeNews(store);
+
+    // Confine the real filesystem failure to this disposable fixture. This
+    // exercises the append error path; it is not a physical disk-full test.
+    final journal = File('${scratch.path}/pilot.jsonl');
+    final saved = await journal.rename('${journal.path}.saved');
+    final obstruction = Directory(journal.path);
+    await obstruction.create();
+    await expectLater(
+      publish(store, failed),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(store.bulletins.containsKey(failed.id), isFalse);
+    expect(store.publications.containsKey(failed.id), isFalse);
+    expect(store.bulletins.containsKey(committed.id), isTrue);
+
+    await obstruction.delete();
+    await saved.rename(journal.path);
+    // Restoring space/access must not permit appending onto a potentially torn
+    // record. A new instance must recover/compact the journal before retrying.
+    await expectLater(publish(store, failed), throwsA(isA<StateError>()));
+    final reopened = PilotStore(scratch, localOwnerId: local.id);
+    await reopened.load();
+    expect(reopened.bulletins.containsKey(committed.id), isTrue);
+    expect(reopened.bulletins.containsKey(failed.id), isFalse);
+    final recovered = await makeNews(reopened);
+    expect(recovered.sequence, greaterThan(failed.sequence));
+    await publish(reopened, recovered);
+    final verified = PilotStore(scratch, localOwnerId: local.id);
+    await verified.load();
+    expect(verified.bulletins.keys.toSet(), {committed.id, recovered.id});
+    expect(verified.publications.keys.toSet(), {committed.id, recovered.id});
+  });
+
   test('oversized journal record is discarded before decoding', () async {
     await scratch.create(recursive: true);
     final file = File('${scratch.path}/pilot.jsonl');

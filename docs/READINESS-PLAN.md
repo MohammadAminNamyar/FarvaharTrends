@@ -86,6 +86,15 @@ at or below 256 items with 255 evictions, and the reopened journal was 380,293
 bytes. Socket writes are not counts of accepted or forwarded spam. These host
 results do not establish phone throughput, battery cost or nationwide capacity.
 
+The append-failure regression obstructs the journal path only inside a disposable
+fixture. A failed publication cannot enter the in-memory news/outbox, subsequent
+writes remain blocked until recovery, committed posts survive reopening, and a
+reserved sequence is not reused. Three additional host trials terminated the
+writer process without a clean shutdown around its seventeenth save; all 16
+previously acknowledged posts and outbox records survived each restart. These
+checks cover filesystem errors and process termination, not a physically full
+phone or loss of power during flash writes.
+
 Still required: long-duration continuous signed spam and identity churn with
 honest traffic continuing; recovery after resource exhaustion; real low-space/crash
 tests; low-end Android CPU/memory/flash/radio measurements. The single global
@@ -154,7 +163,8 @@ review have regression checks. Advanced test-message metadata starts collapsed.
 
 The 14 October follow-up adds the signed-spam regression without changing app
 code or the 0.8.11 APK. Static analysis passed and the complete Flutter suite
-passed all 533 tests with two concurrent test workers. The first full run had
+passed all 534 tests with two concurrent test workers after adding the storage
+failure regression (533 passed before that addition). The first full run had
 one timeout in the existing UDP discovery test; its six-test file passed in
 isolation and the subsequent full run passed. This intermittent failure remains
 recorded rather than being counted as a clean first run. Overlay/native code
