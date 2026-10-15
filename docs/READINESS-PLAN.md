@@ -6,7 +6,7 @@ No CI or release automation is part of this work.
 
 ## 1. Reconnection and delivery
 
-Implemented for the next build: authenticated overlay peers gain explicit,
+Implemented in 0.8.8: authenticated overlay peers gain explicit,
 bounded reconnect intent immediately, including removal on cache eviction and
 respect for quarantine. An isolated but answering worklet is restarted after
 90 seconds with remembered peers, or 180 seconds on a fresh install. Repeated
@@ -17,8 +17,12 @@ alone is not a successful application link.
 Evidence: real local HyperDHT/Hyperswarm peers reconnected after removing the
 initial bootstrap and topic discovery, then exchanged Persian text. Policy
 tests cover outage backoff, brief connections, offline periods and network
-changes. Repeat emulator-to-cellular delivery, interface changes and stalled
-transport recovery on the rebuilt APK. Record every failed attempt as well as
+changes. A release-app Persian post became visible on the Samsung over mobile
+data within 3.36 seconds of the emulator publish tap (one host monotonic clock).
+A second post arrived after changing back to Wi-Fi while the phone was dozing;
+device wall-clock timestamps differed by two seconds. The screen woke after
+about two minutes, so this was a short screen-off check. Repeat interface
+changes and stalled transport recovery over longer trials. Record failures and
 successful deliveries; compare host-monotonic observations rather than two
 phones' wall clocks. Aim for automatic reconnection within two minutes when a
 known route is reachable; measure the proportion of news arriving within five
@@ -55,7 +59,7 @@ power state; a simulated unplug is not a battery measurement.
 ## 4. Abuse, storage and scale
 
 Existing bounds cover frame sizes, work, requests, connections, channel/news
-caches and optional images. The next build also prioritizes locally followed
+caches and optional images. Version 0.8.8 also prioritizes locally followed
 news within the shared cache; other public news keeps relay space subject to
 the local outbox's existing priority. Follow choices are not added to envelopes
 or journal records. This changes retention, not traffic-analysis guarantees.
@@ -71,26 +75,31 @@ as million-device validation or rate limits as Sybil resistance.
 
 ## 5. Publisher authority and security
 
-Current encrypted backups recover lost keys. Editor revocation is implemented.
-Backups do not revoke a stolen owner key. A protocol upgrade must precommit an
-independent recovery authority before compromise, keep its private key off the
-publishing device after export, and authorize replacement online keys through
+Legacy encrypted backups recover lost keys. Editor revocation is implemented.
+Legacy backups do not revoke a stolen owner key. The experimental 0.8.9 upgrade precommits an
+independent recovery authority before compromise, keeps its private key off the
+publishing device after export, and authorizes replacement online keys through
 signed increasing generations. A compromised online key must not be able to
 advance those generations, replace the recovery authority or win with an
 arbitrarily large ordinary policy revision.
 
-The upgrade must preserve v1 channel access, explicitly migrate existing
-channels, reject rollback and cross-channel proofs, define competing recovery
-actions, survive cache eviction/restart, and tell offline readers when authority
-is unknown. Test recovery followed by replay of the stolen key, policy deletion,
-old backups, concurrent editors and a fresh receiver. Historical news retention
-after compromise needs an explicit rule; timestamps cannot prove pre-compromise
-authorship. Do not silently reinterpret v1 metadata as protected by a new key.
+The implementation preserves v1 channel access and provides an explicit new-channel
+migration choice. Its tests exercise
+rollback and cross-channel proofs, competing recovery actions, restart and
+independent proof persistence. The UI identifies unknown/conflicting authority.
+Recovery, old-owner replay, deletion, stale backups and a fresh receiver through
+a relay have local test coverage. Old-generation news leaves the active cache
+after recovery; timestamps cannot prove pre-compromise authorship. V1 metadata
+is not reinterpreted as protected by a new key. Android file-picker checks now
+confirm cancellation leaves authority unchanged, and saving a replacement kit
+rotates authority and prunes old-generation news on a mobile-data Samsung.
+Independent review remains required.
 
 The separation of offline trust and online authority is informed by the
 [TUF specification](https://theupdateframework.github.io/specification/latest/).
-This is a channel-protocol design task, not a claim to implement TUF. It remains
-unimplemented until its protocol, UI/export flow and tests are complete.
+This is a separate channel protocol, not an implementation of TUF. See
+[owner recovery](CHANNEL-OWNER-RECOVERY.md) for implementation limits, including
+the bounded permanent proof store and offline freshness.
 
 Independent review is still needed for cryptography, native transport boundaries,
 active/passive probing and traffic correlation. The current Dart RSA private
@@ -106,3 +115,17 @@ channels or keys. Reconcile superseded documentation, review the diff and ensure
 APKs, credentials, generated files and assistant notes remain ignored. Commit
 and push source to the renamed repository after validation. Keep device evidence
 local and report outstanding field/security gates alongside the APK.
+
+The 0.8.9–0.8.10 reader review adds compact news cards with a details sheet, a consistent
+local unread counter and unread-only channel filter, less crowded channel
+actions, and Farsi/English narrow-screen checks at larger text sizes. Channel
+timelines identify their source once, followed channels leave Discover, and
+literal web addresses open externally only when tapped. Link rendering leaves
+the signed/copied text intact and never requests automatic previews.
+Settings now groups reader and network preferences outside Connection. Unread
+is part of the top channel selector; the advanced guide and diagnostic counters
+respect the selected Farsi/English language. News details groups local times,
+delivery route and signature information in separate sections.
+Version 0.8.11 stores an optional public writer nickname in Settings and reuses
+it for new posts across channels. Restart, validation, failed saves and composer
+review have regression checks. Advanced test-message metadata starts collapsed.

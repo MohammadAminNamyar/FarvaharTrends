@@ -1,16 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
-
 import 'localization.dart';
 import 'news_components.dart';
+import 'news_text.dart';
+import 'news_details_sheet.dart';
 
-const _ink = inkColor;
-const _muted = mutedColor;
-const _teal = tealTextColor;
-const _line = lineColor;
-
-/// The same article presentation in the channel timeline and followed feed.
+/// A reading-first card shared by the channel timeline and followed feed.
 class NewsCard extends StatelessWidget with Localized {
   const NewsCard({
     super.key,
@@ -18,6 +14,7 @@ class NewsCard extends StatelessWidget with Localized {
     required this.channel,
     required this.fa,
     required this.assessment,
+    this.showChannelHeader = true,
     this.onOpenChannel,
     this.onRemove,
   });
@@ -25,93 +22,89 @@ class NewsCard extends StatelessWidget with Localized {
   @override
   final bool fa;
   final String assessment;
+  final bool showChannelHeader;
   final VoidCallback? onOpenChannel, onRemove;
 
   @override
   Widget build(BuildContext context) {
     final byline = news['byline'];
-    final route = _arrival(news['receivedVia']);
+    final showByline =
+        byline is String &&
+        byline.trim().isNotEmpty &&
+        byline.trim() != (channel['name'] as String? ?? '').trim();
     return Container(
       key: ValueKey('news-card-${news['id']}'),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _line),
-        boxShadow: [
-          BoxShadow(
-            color: _ink.withValues(alpha: .035),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: lineColor),
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(15),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Material(
-              color: const Color(0xFFF7F5F0),
-              child: InkWell(
-                onTap: onOpenChannel,
-                child: Container(
-                  key: ValueKey('news-header-${news['id']}'),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 13,
-                  ),
-                  decoration: const BoxDecoration(
-                    border: Border(bottom: BorderSide(color: _line)),
-                  ),
-                  child: Row(
-                    children: [
-                      ChannelAvatar(channel: channel, size: 34),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              channel['name'] as String? ?? '',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: _ink,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w800,
+            if (showChannelHeader)
+              Material(
+                color: Colors.white,
+                child: InkWell(
+                  onTap: onOpenChannel,
+                  child: Padding(
+                    key: ValueKey('news-header-${news['id']}'),
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                    child: Row(
+                      children: [
+                        ChannelAvatar(channel: channel, size: 36),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                channel['name'] as String? ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: inkColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              assessment,
-                              key: ValueKey('news-trust-${news['id']}'),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: _muted,
-                                fontSize: 10.5,
-                                height: 1.5,
+                              const SizedBox(height: 2),
+                              Text(
+                                assessment,
+                                key: ValueKey('news-trust-${news['id']}'),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: mutedColor,
+                                  fontSize: 11,
+                                  height: 1.5,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        channelActivityTime(context, news['createdAtMs'], fa),
-                        style: const TextStyle(
-                          color: _muted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
+                        const SizedBox(width: 8),
+                        Text(
+                          channelActivityTime(context, news['createdAtMs'], fa),
+                          style: const TextStyle(
+                            color: mutedColor,
+                            fontSize: 11,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 19, 18, 22),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                showChannelHeader ? 8 : 16,
+                16,
+                18,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -120,115 +113,49 @@ class NewsCard extends StatelessWidget with Localized {
                       image: Map<String, dynamic>.from(news['image'] as Map),
                       fa: fa,
                     ),
-                  SelectableText(
-                    news['text'] as String? ?? '',
-                    style: const TextStyle(
-                      color: _ink,
-                      fontSize: 16,
-                      height: 1.9,
-                    ),
-                  ),
+                  NewsText(text: news['text'] as String? ?? '', fa: fa),
                 ],
               ),
             ),
             Container(
               key: ValueKey('news-footer-${news['id']}'),
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              padding: const EdgeInsetsDirectional.fromSTEB(16, 2, 6, 2),
               decoration: const BoxDecoration(
-                color: Color(0xFFECF5F3),
-                border: Border(top: BorderSide(color: _line)),
+                color: softSurfaceColor,
+                border: Border(top: BorderSide(color: lineColor)),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  if (byline is String && byline.isNotEmpty) ...[
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.edit_note_rounded,
-                          size: 17,
-                          color: _teal,
+                  if (showByline)
+                    Expanded(
+                      child: Text(
+                        t('نویسنده: $byline', 'By $byline'),
+                        key: ValueKey('news-byline-${news['id']}'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: mutedColor,
+                          fontSize: 12,
+                          height: 1.5,
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            t('نویسنده: $byline', 'By $byline'),
-                            key: ValueKey('news-byline-${news['id']}'),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: _ink,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
-                              height: 1.6,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: NewsTimes(news: news, fa: fa, compact: true),
                       ),
-                      if (onRemove != null)
-                        IconButton(
-                          key: ValueKey('remove-news-${news['id']}'),
-                          tooltip: t('حذف خبر', 'Remove news'),
-                          onPressed: onRemove,
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(
-                            Icons.delete_outline_rounded,
-                            size: 19,
-                            color: _muted,
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Tooltip(
-                    message: t(
-                      'امضا کلید ناشر را تأیید می‌کند؛ درستی خبر را مستقل بررسی کنید.',
-                      'The signature verifies the publishing key. Check factual accuracy independently.',
                     ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.verified_user_outlined,
-                          color: _teal,
-                          size: 13,
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            t(
-                              'امضای دیجیتال معتبر · خبر عمومی',
-                              'Valid digital signature · public news',
-                            ),
-                            style: const TextStyle(
-                              color: _teal,
-                              fontSize: 10,
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (route != null) ...[
-                    const SizedBox(height: 4),
+                  if (!showByline) const Spacer(),
+                  if (!showChannelHeader)
                     Text(
-                      route,
-                      style: const TextStyle(
-                        color: _muted,
-                        fontSize: 10,
-                        height: 1.5,
-                      ),
+                      channelActivityTime(context, news['createdAtMs'], fa),
+                      style: const TextStyle(color: mutedColor, fontSize: 11),
                     ),
-                  ],
+                  IconButton(
+                    key: ValueKey('news-details-${news['id']}'),
+                    tooltip: t('جزئیات خبر', 'News details'),
+                    onPressed: () => _details(context),
+                    icon: const Icon(
+                      Icons.info_outline_rounded,
+                      color: tealTextColor,
+                      size: 21,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -238,6 +165,20 @@ class NewsCard extends StatelessWidget with Localized {
     );
   }
 
+  Future<void> _details(BuildContext context) => showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    useSafeArea: true,
+    isScrollControlled: true,
+    backgroundColor: canvasColor,
+    builder: (_) => NewsDetailsSheet(
+      news: news,
+      channel: channel,
+      fa: fa,
+      route: _arrival(news['receivedVia']),
+      onRemove: onRemove,
+    ),
+  );
   String? _arrival(dynamic route) => switch (route) {
     'overlay' => t(
       'دریافت از شبکهٔ همتاها',

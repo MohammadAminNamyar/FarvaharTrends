@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'channels.dart';
 import 'channel_control.dart';
+import 'owner_authority.dart';
+import 'owner_authority_checkpoint.dart';
 import 'models.dart';
 import 'peer_activity.dart';
 
@@ -18,14 +20,17 @@ class PilotStore {
     this.directory, {
     this.localOwnerId,
     Iterable<String> protectedChannelIds = const [],
-  }) {
+    OwnerAuthorityCheckpoint? authorityCheckpoint,
+  }) : _ownerCheckpoint =
+           authorityCheckpoint ?? OwnerAuthorityCheckpoint(directory) {
     if (localOwnerId != null &&
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(localOwnerId!)) {
       throw ArgumentError('Expected a local owner fingerprint.');
     }
-    setProtectedChannelIds(protectedChannelIds);
+    _setProtectedChannelIds(protectedChannelIds);
   }
   final Directory directory;
+  final OwnerAuthorityCheckpoint _ownerCheckpoint;
 
   /// The local signing key, never private follow/trust preferences. Unknown
   /// ownership retains the conservative legacy policy of rejecting at capacity.
@@ -33,7 +38,7 @@ class PilotStore {
   final Set<String> managedChannelIds = {};
   // Opaque local retention hints. Never journaled, exported or sent to peers.
   final Set<String> _protectedChannelIds = {};
-  void setProtectedChannelIds(Iterable<String> ids) {
+  void _setProtectedChannelIds(Iterable<String> ids) {
     _protectedChannelIds
       ..clear()
       ..addAll(
@@ -41,6 +46,58 @@ class PilotStore {
             .where((id) => RegExp(r'^[a-f0-9]{64}$').hasMatch(id))
             .take(maxChannels),
       );
+  }
+
+  Future<void> setProtectedChannelIds(Iterable<String> ids) =>
+      _serial(() async {
+        final selected = ids
+            .where((id) => RegExp(r'^[a-f0-9]{64}$').hasMatch(id))
+            .take(maxChannels)
+            .toSet();
+        if (selected.length == _protectedChannelIds.length &&
+            selected.containsAll(_protectedChannelIds)) {
+          return;
+        }
+        if (_loaded) {
+          for (final id in selected) {
+            final authority = authorityFor(id);
+            final raw = channels[id];
+            if (authority != null && raw != null) {
+              await _ownerCheckpoint.remember(
+                authority,
+                SignedChannel.fromJson(raw),
+              );
+            }
+          }
+        }
+        _setProtectedChannelIds(selected);
+      });
+
+  Future<void> _checkpointAuthority(
+    OwnerAuthority authority,
+    SignedChannel channel,
+  ) async {
+    // Unsolicited foreign channels cannot fill the permanent recovery store.
+    // Retain durable anti-rollback anchors for local/followed channels and
+    // update any already remembered anchor even after it is unfollowed.
+    if (_protected(channel.id) || _ownerCheckpoint.known(channel) != null) {
+      await _ownerCheckpoint.remember(authority, channel);
+    }
+  }
+
+  Future<void> refreshAuthorityCheckpoint() => _ownerCheckpoint.isLoaded
+      ? Future<void>.value()
+      : _serial(_recoverAuthorityCheckpoint);
+
+  Future<void> _recoverAuthorityCheckpoint() async {
+    if (_ownerCheckpoint.isLoaded) return;
+    await _ownerCheckpoint.load();
+    for (final raw in channels.values.toList()) {
+      final channel = SignedChannel.fromJson(raw);
+      if (!channel.recoverable) continue;
+      final known = _ownerCheckpoint.known(channel);
+      if (known != null) _applyOwnerAuthority(known);
+    }
   }
 
   bool _protected(String id) =>
@@ -75,6 +132,7 @@ class PilotStore {
   final Map<String, Map<String, dynamic>> publications = {};
   final Map<String, Map<String, dynamic>> channels = {};
   final Map<String, Map<String, dynamic>> channelPolicies = {};
+  final Map<String, Map<String, dynamic>> ownerAuthorities = {};
   final Map<String, String> _channelPublishers = {};
   final Map<String, int> channelSequences = {};
   final Map<String, String> _bulletinPublishers = {};
@@ -107,6 +165,7 @@ class PilotStore {
   Future<void> load() => _serial(() async {
     if (_loaded) return;
     await directory.create(recursive: true);
+    await _ownerCheckpoint.load();
     final backup = File('${_journal.path}.bak');
     if (!await _journal.exists() && await backup.exists()) {
       await backup.rename(_journal.path);
@@ -118,6 +177,15 @@ class PilotStore {
         await _recoverJournal();
       } finally {
         _recovering = false;
+      }
+    }
+    for (final raw in channels.values.toList()) {
+      final channel = SignedChannel.fromJson(raw);
+      if (!channel.recoverable) continue;
+      final authority = authorityFor(channel.id);
+      if (authority != null) {
+        await _checkpointAuthority(authority, channel);
+        _applyOwnerAuthority(authority);
       }
     }
     _loaded = true;
@@ -148,6 +216,8 @@ class PilotStore {
       'kind': 'channelSequence',
       'channelId': channelId,
       'value': next,
+      if (SignedChannel.fromJson(channels[channelId]!).recoverable)
+        'ownerGeneration': authorityFor(channelId)?.generation,
     });
     return next;
   });
@@ -202,8 +272,43 @@ class PilotStore {
         : ChannelControl.parse(raw, SignedChannel.fromJson(channel));
   }
 
+  OwnerAuthority? authorityFor(String channelId) {
+    final channel = channels[channelId];
+    if (channel == null) return null;
+    return knownOwnerAuthority(SignedChannel.fromJson(channel));
+  }
+
+  OwnerAuthority? knownOwnerAuthority(SignedChannel metadata) {
+    final raw = ownerAuthorities[metadata.id];
+    if (!metadata.recoverable) return null;
+    final checkpoint = _ownerCheckpoint.known(metadata);
+    final cached = raw == null ? null : OwnerAuthority.parse(raw, metadata);
+    return cached == null ? checkpoint : checkpoint?.merge(cached) ?? cached;
+  }
+
+  Future<bool> putOwnerAuthority(OwnerAuthority authority) => _serial(() async {
+    _requireLoaded();
+    await _recoverAuthorityCheckpoint();
+    final metadata = channels[authority.channelId];
+    if (metadata == null) {
+      throw const FormatException('Missing authority channel.');
+    }
+    final verified = OwnerAuthority.parse(
+      authority.toJson(),
+      SignedChannel.fromJson(metadata),
+    );
+    final previous = authorityFor(authority.channelId);
+    final merged = previous?.merge(verified) ?? verified;
+    if (merged.id == previous?.id) return false;
+    await _checkpointAuthority(merged, SignedChannel.fromJson(metadata));
+    _applyOwnerAuthority(merged);
+    await _append({'kind': 'ownerAuthority', 'value': merged.toJson()});
+    return true;
+  });
+
   Future<bool> putChannelPolicy(ChannelControl policy) => _serial(() async {
     _requireLoaded();
+    await _recoverAuthorityCheckpoint();
     final channel = channels[policy.channelId];
     if (channel == null || policy.kind != 'policy') {
       throw const FormatException('Channel policy has no channel.');
@@ -213,8 +318,29 @@ class PilotStore {
       SignedChannel.fromJson(channel),
     );
     final previous = policyFor(policy.channelId);
-    if (previous?.deleted == true && !verified.deleted) return false;
+    final metadata = SignedChannel.fromJson(channel);
+    if (metadata.recoverable) {
+      final incoming = OwnerAuthority.fromGrant(verified.ownerGrant!, metadata);
+      final known = authorityFor(policy.channelId);
+      final merged = known?.merge(incoming) ?? incoming;
+      if (merged.id != known?.id) {
+        await _checkpointAuthority(merged, metadata);
+        _applyOwnerAuthority(merged);
+      }
+      if (!merged.allows(verified)) {
+        if (merged.id != known?.id) {
+          await _append({'kind': 'ownerAuthority', 'value': merged.toJson()});
+        }
+        return false;
+      }
+    }
+    if (previous?.generation == verified.generation &&
+        previous?.deleted == true &&
+        !verified.deleted) {
+      return false;
+    }
     if (previous != null &&
+        previous.generation == verified.generation &&
         (previous.revision > verified.revision ||
             (previous.revision == verified.revision &&
                 previous.id.compareTo(verified.id) <= 0))) {
@@ -236,6 +362,8 @@ class PilotStore {
             'kind': 'channelSequence',
             'channelId': id,
             'value': sequence,
+            if (SignedChannel.fromJson(channels[id]!).recoverable)
+              'ownerGeneration': authorityFor(id)?.generation,
           });
         }
       });
@@ -382,6 +510,12 @@ class PilotStore {
             value > 9007199254740991) {
           throw const FormatException('Invalid channel sequence record.');
         }
+        final metadata = channels[id];
+        if (metadata != null &&
+            SignedChannel.fromJson(metadata).recoverable &&
+            record['ownerGeneration'] != authorityFor(id)?.generation) {
+          break;
+        }
         if (channels.containsKey(id) && value >= (channelSequences[id] ?? 0)) {
           channelSequences[id] = value;
         }
@@ -397,6 +531,13 @@ class PilotStore {
       case 'channel':
         final channel = SignedChannel.fromJson(_map(record['value']));
         _admitChannel(channel);
+      case 'ownerAuthority':
+        final raw = _map(record['value']);
+        final metadata = channels[raw['channelId']];
+        if (metadata == null) break;
+        _applyOwnerAuthority(
+          OwnerAuthority.parse(raw, SignedChannel.fromJson(metadata)),
+        );
       case 'channelPolicy':
         final raw = _map(record['value']);
         final encoded = utf8.decode(
@@ -411,6 +552,13 @@ class PilotStore {
         );
         if (policy.kind != 'policy') {
           throw const FormatException('Expected channel policy.');
+        }
+        final channel = SignedChannel.fromJson(metadata);
+        if (channel.recoverable) {
+          _applyOwnerAuthority(
+            OwnerAuthority.fromGrant(policy.ownerGrant!, channel),
+          );
+          if (!authorityFor(channelId)!.allows(policy)) break;
         }
         final previous = policyFor(channelId);
         if (previous?.deleted == true && !policy.deleted) break;
@@ -427,6 +575,7 @@ class PilotStore {
                 !news.verifyForChannel(
                   SignedChannel.fromJson(metadata),
                   policy: policy,
+                  ownerAuthority: authorityFor(channelId),
                 )) {
               bulletins.remove(id);
               publications.remove(id);
@@ -504,6 +653,45 @@ class PilotStore {
   bool _fingerprint(dynamic value) =>
       value is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
 
+  void _applyOwnerAuthority(OwnerAuthority incoming) {
+    final metadata = SignedChannel.fromJson(channels[incoming.channelId]!);
+    final cached = ownerAuthorities[incoming.channelId];
+    final previous = cached == null
+        ? null
+        : OwnerAuthority.parse(cached, metadata);
+    final checkpoint = _ownerCheckpoint.known(metadata);
+    final merged = (previous?.merge(incoming) ?? incoming);
+    final effective = checkpoint?.merge(merged) ?? merged;
+    if (effective.id == previous?.id) return;
+    if (effective.generation > (previous?.generation ?? 0)) {
+      channelSequences.remove(incoming.channelId);
+    }
+    ownerAuthorities[incoming.channelId] = effective.toJson();
+    final policy = policyFor(incoming.channelId);
+    if (policy != null && !effective.allows(policy)) {
+      channelPolicies.remove(incoming.channelId);
+    }
+    // A timestamp cannot prove news was written before compromise. Once a
+    // higher generation/conflict is learned, old-generation news leaves the
+    // active cache. This is not a promise to erase remote copies.
+    for (final id in bulletins.keys.toList()) {
+      if (_bulletinChannels[id] != incoming.channelId) continue;
+      final news = SignedBulletin.fromJson(bulletins[id]!);
+      if (!news.verifyForChannel(
+        SignedChannel.fromJson(channels[incoming.channelId]!),
+        policy: policyFor(incoming.channelId),
+        ownerAuthority: effective,
+      )) {
+        bulletins.remove(id);
+        publications.remove(id);
+        bulletinObservations.remove(id);
+        _bulletinChannels.remove(id);
+        _bulletinPublishers.remove(id);
+        _bulletinSequences.remove(id);
+      }
+    }
+  }
+
   /// Restore into an isolated staging store. A malformed optional field or row
   /// can never leave half of a snapshot installed in the running store.
   void _restoreSnapshot(Map<String, dynamic> record) {
@@ -511,6 +699,7 @@ class PilotStore {
       'peers',
       'channels',
       'channelPolicies',
+      'ownerAuthorities',
       'channelSequences',
       'bulletins',
       'bulletinObservations',
@@ -530,6 +719,7 @@ class PilotStore {
             directory,
             localOwnerId: localOwnerId,
             protectedChannelIds: _protectedChannelIds,
+            authorityCheckpoint: _ownerCheckpoint,
           )
           .._recovering = _recovering
           ..managedChannelIds.addAll(managedChannelIds);
@@ -546,6 +736,23 @@ class PilotStore {
       staged.peers.addAll(staged._validatedPeers(savedPeers.values));
     }
     staged._restoreChannels(record['channels']);
+    final savedAuthorities = record['ownerAuthorities'];
+    if (savedAuthorities is Map) {
+      for (final row in savedAuthorities.entries) {
+        final metadata = staged.channels[row.key];
+        if (metadata == null) continue;
+        // Authority is a rollback boundary. A malformed persisted proof must
+        // not silently make a protected channel accept an older generation.
+        final state = OwnerAuthority.parse(
+          _map(row.value),
+          SignedChannel.fromJson(metadata),
+        );
+        if (state.channelId != row.key) {
+          throw const FormatException('Authority snapshot binding mismatch.');
+        }
+        staged.ownerAuthorities[row.key as String] = state.toJson();
+      }
+    }
     final savedPolicies = record['channelPolicies'];
     if (savedPolicies is Map) {
       for (final row in savedPolicies.entries) {
@@ -556,7 +763,11 @@ class PilotStore {
             Map<String, dynamic>.from(row.value as Map),
             SignedChannel.fromJson(metadata),
           );
-          if (policy.kind == 'policy' && policy.channelId == row.key) {
+          if (policy.kind == 'policy' &&
+              policy.channelId == row.key &&
+              (!SignedChannel.fromJson(metadata).recoverable ||
+                  staged.authorityFor(row.key as String)?.allows(policy) ==
+                      true)) {
             staged.channelPolicies[row.key as String] = policy.toJson();
           }
         } on FormatException {
@@ -629,6 +840,7 @@ class PilotStore {
       (peers, staged.peers),
       (channels, staged.channels),
       (channelPolicies, staged.channelPolicies),
+      (ownerAuthorities, staged.ownerAuthorities),
       (bulletins, staged.bulletins),
       (bulletinObservations, staged.bulletinObservations),
       (receipts, staged.receipts),
@@ -865,6 +1077,7 @@ class PilotStore {
             !bulletin.verifyForChannel(
               SignedChannel.fromJson(metadata),
               policy: policyFor(bulletin.channelId!),
+              ownerAuthority: authorityFor(bulletin.channelId!),
             )) {
           throw const FormatException('Invalid cached channel news signature.');
         }
@@ -959,6 +1172,7 @@ class PilotStore {
         !incoming.verifyForChannel(
           SignedChannel.fromJson(channels[incoming.channelId]!),
           policy: policyFor(incoming.channelId!),
+          ownerAuthority: authorityFor(incoming.channelId!),
         )) {
       return false;
     }
@@ -1026,6 +1240,7 @@ class PilotStore {
     for (final id in remove) {
       channels.remove(id);
       channelPolicies.remove(id);
+      ownerAuthorities.remove(id);
       _channelPublishers.remove(id);
       channelSequences.remove(id);
       evictions['channels'] = evictions['channels']! + 1;
@@ -1108,7 +1323,7 @@ class PilotStore {
       evictions['events'] = evictions['events']! + 1;
     }
     final encoded = utf8.encode(
-      '${jsonEncode({'kind': 'snapshot', 'peers': peers, 'channels': channels, 'channelPolicies': channelPolicies, 'channelSequences': channelSequences, 'bulletins': bulletins, 'bulletinObservations': bulletinObservations, 'receipts': receipts, 'publications': publications, 'events': events, 'sequence': sequence, 'evictions': evictions})}\n',
+      '${jsonEncode({'kind': 'snapshot', 'peers': peers, 'channels': channels, 'channelPolicies': channelPolicies, 'ownerAuthorities': ownerAuthorities, 'channelSequences': channelSequences, 'bulletins': bulletins, 'bulletinObservations': bulletinObservations, 'receipts': receipts, 'publications': publications, 'events': events, 'sequence': sequence, 'evictions': evictions})}\n',
     );
     if (encoded.length > maxJournalRecordBytes) {
       throw StateError('Snapshot exceeds recovery limit; journal retained.');

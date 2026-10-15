@@ -175,6 +175,10 @@ class ChannelItem {
   String get name => _string(raw['name']) ?? '';
   String get description => _string(raw['description']) ?? '';
   String get ownerId => _string(raw['ownerId']) ?? '';
+  bool get recoverable => _bool(raw['recoverable']);
+  String get recoveryId => _string(raw['recoveryId']) ?? '';
+  String get ownerAuthorityState =>
+      _string(raw['ownerAuthorityState']) ?? 'unknown';
   int? get createdAtMs => _epochMs(raw['createdAtMs']);
   bool get owned => _bool(raw['owned']);
   bool get canPublish => _bool(raw['canPublish']);

@@ -111,11 +111,6 @@ class NewsFeedView with Localized {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      t('نمایش خبر از', 'Showing news from'),
-                      style: const TextStyle(fontSize: 10, color: mutedColor),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
                       selected == null
                           ? t(
                               'همهٔ کانال‌های دنبال‌شده',

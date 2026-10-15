@@ -72,6 +72,16 @@ class NewsDateFormat {
     return at == null ? unavailable : _digits(_clock(at.wall));
   }
 
+  /// Calendar date in the viewer's timezone, without repeating the clock.
+  String date(dynamic epochMs) {
+    final at = resolve(epochMs);
+    return at == null
+        ? unavailable
+        : fa
+        ? _jalaliDate(at.wall)
+        : _gregorianDate(at.wall);
+  }
+
   /// Full label: date, `HH:MM:SS` and the UTC offset in force at that instant.
   /// English: `2026/10/13 11:38:06 UTC+03:30`.
   /// Farsi: `۲۱ مهر ۱۴۰۵ ۱۱:۳۸:۰۶ UTC+۰۳:۳۰`, with the offset token wrapped in

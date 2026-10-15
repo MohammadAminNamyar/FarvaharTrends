@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pilot_platform/pilot_platform.dart';
 
 import '../app_controller.dart';
 import '../core/snapshot_dto.dart';
@@ -14,8 +15,14 @@ import 'shared_widgets.dart';
 import 'theme.dart';
 
 class CreateChannelPage extends StatefulWidget {
-  const CreateChannelPage({super.key, required this.app});
+  const CreateChannelPage({
+    super.key,
+    required this.app,
+    this.initialName = '',
+    this.initialDescription = '',
+  });
   final AppController app;
+  final String initialName, initialDescription;
   @override
   State<CreateChannelPage> createState() => _CreateChannelPageState();
 }
@@ -24,8 +31,16 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
   final form = GlobalKey<FormState>();
   final name = TextEditingController();
   final description = TextEditingController();
+  final scroll = ScrollController();
   bool submitting = false;
   String? submissionError;
+  @override
+  void initState() {
+    super.initState();
+    name.text = widget.initialName;
+    description.text = widget.initialDescription;
+  }
+
   @override
   bool get fa => isFarsiLanguage(widget.app.languageCode);
 
@@ -33,7 +48,20 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
   void dispose() {
     name.dispose();
     description.dispose();
+    scroll.dispose();
     super.dispose();
+  }
+
+  void revealError() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && submissionError != null && scroll.hasClients) {
+        scroll.animateTo(
+          0,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   Future<void> submit() async {
@@ -43,6 +71,10 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
       submitting = true;
       submissionError = null;
     });
+    if (Snapshot.fromJson(widget.app.snapshot).channelKeyManagement) {
+      await submitProtected();
+      return;
+    }
     final before = Snapshot.fromJson(widget.app.snapshot).channels
         .map((c) => c.id)
         .toSet();
@@ -55,6 +87,7 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
         submitting = false;
         submissionError = widget.app.error;
       });
+      revealError();
     } else {
       final snapshot = Snapshot.fromJson(widget.app.snapshot);
       if (snapshot.channelKeyManagement) {
@@ -100,6 +133,74 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
     }
   }
 
+  Future<void> submitProtected() async {
+    String? token;
+    var saved = false;
+    try {
+      final secret = await showRecoveryPassword(
+        context,
+        fa: fa,
+        creating: true,
+      );
+      if (secret == null || !mounted) return;
+      final result = await widget.app.channelAction('prepareProtectedChannel', {
+        'name': name.text.trim(),
+        'description': description.text.trim(),
+        'password': secret,
+      });
+      final prepared = jsonDecode(result!) as Map;
+      token = prepared['token'] as String;
+      saved = await PilotPlatform.saveChannelDocument(
+        prepared['file'] as String,
+        'FarvaharTrends-owner-recovery-1.json',
+      );
+      if (!saved) {
+        if (mounted) {
+          setState(
+            () => submissionError = t(
+              'ذخیره لغو شد؛ کانال منتشر نشده است.',
+              'Saving was cancelled; the channel was not published.',
+            ),
+          );
+        }
+        return;
+      }
+      await widget.app.channelAction('commitProtectedChannel', {
+        'token': token,
+      });
+      token = null;
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => submissionError = saved
+              ? t(
+                  'فایل ذخیره شد، اما ساخت کانال کامل نشد. فایل را نگه دارید و از «بازیابی و همکاری» باز کنید.',
+                  'The file was saved, but channel creation did not finish. Keep it and open it from Recovery & collaboration.',
+                )
+              : t(
+                  'کانال ساخته نشد. فضای ذخیره‌سازی و دسترسی فایل را بررسی کنید و دوباره تلاش کنید.',
+                  'The channel was not created. Check storage space and file access, then try again.',
+                ),
+        );
+      }
+    } finally {
+      if (token != null) {
+        try {
+          await widget.app.channelAction('cancelProtectedChannel', {
+            'token': token,
+          });
+        } catch (_) {
+          /* Preparation expires locally. */
+        }
+      }
+      if (mounted) {
+        setState(() => submitting = false);
+        revealError();
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !submitting,
@@ -113,6 +214,7 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
         child: Form(
           key: form,
           child: ListView(
+            controller: scroll,
             padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
             children: [
               Text(
@@ -127,6 +229,10 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
                 ),
               ),
               const SizedBox(height: 25),
+              if (submissionError != null) ...[
+                SubmissionError(submissionError!, farsi: fa),
+                const SizedBox(height: 16),
+              ],
               TextFormField(
                 key: const ValueKey('channel-name'),
                 controller: name,
@@ -212,6 +318,33 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
                 },
               ),
               const SizedBox(height: 23),
+              if (Snapshot.fromJson(widget.app.snapshot)
+                  .channelKeyManagement) ...[
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.key_outlined, color: tealTextColor),
+                      const SizedBox(height: 10),
+                      Text(
+                        t(
+                          'فایل بازیابی، جدا از گوشی',
+                          'Keep recovery separate from your phone',
+                        ),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        t(
+                          'پیش از انتشار کانال، یک فایل رمزگذاری‌شده ذخیره می‌کنید. این فایل می‌تواند کلید انتشار گم‌شده یا سرقت‌شده را عوض کند. یک نسخه را بیرون از این گوشی و رمز را جدا نگه دارید.',
+                          'Before publishing the channel, save an encrypted recovery kit. It can replace a lost or stolen publishing key. Keep a copy away from this phone, and keep its password separately.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 23),
+              ],
               Text(
                 t('پیش‌نمایش کانال', 'CHANNEL PREVIEW'),
                 style: const TextStyle(
@@ -259,10 +392,6 @@ class _CreateChannelPageState extends State<CreateChannelPage> with Localized {
                 ),
                 style: const TextStyle(fontSize: 11, height: 1.8),
               ),
-              if (submissionError != null) ...[
-                const SizedBox(height: 16),
-                SubmissionError(submissionError!, farsi: fa),
-              ],
             ],
           ),
         ),

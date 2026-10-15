@@ -1,7 +1,7 @@
 name: farvahar_trends
 description: "FarvaharTrends — a signed bulletin delivery pilot with no required central server."
 publish_to: 'none'
-version: 0.8.8+19
+version: 0.8.11+22
 
 environment:
   sdk: ^3.13.4
@@ -22,6 +22,7 @@ dependencies:
   pilot_platform:
     path: packages/pilot_platform
   qr_flutter: 4.1.0
+  url_launcher: 6.3.3
 
 dev_dependencies:
   # Exercise the locally patched service messenger used by the Android app.

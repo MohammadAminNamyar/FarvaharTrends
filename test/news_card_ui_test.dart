@@ -8,6 +8,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:farvahar_trends/ui/news_card.dart';
 
 void main() {
+  testWidgets(
+    'channel timeline hides duplicate identity, preserves distinct writers',
+    (tester) async {
+      Future<void> showCard({
+        required bool showHeader,
+        required String writer,
+      }) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: NewsCard(
+                news: {
+                  'id': 'one',
+                  'text': 'A public update',
+                  'byline': writer,
+                },
+                channel: {'id': 'a' * 64, 'name': 'Community'},
+                fa: false,
+                assessment: 'Not assessed',
+                showChannelHeader: showHeader,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await showCard(showHeader: false, writer: 'Community');
+      expect(find.text('Community'), findsNothing);
+      expect(find.text('By Community'), findsNothing);
+      expect(find.byKey(const ValueKey('news-header-one')), findsNothing);
+      await showCard(showHeader: false, writer: 'Elias');
+      expect(find.text('By Elias'), findsOneWidget);
+      await showCard(showHeader: true, writer: 'Community');
+      expect(find.text('Community'), findsOneWidget);
+      expect(find.text('By Community'), findsNothing);
+    },
+  );
   setUpAll(() async {
     for (final font in {
       'Manrope': 'assets/fonts/Manrope.ttf',
@@ -69,15 +107,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final sentLabel = tester.widget<Text>(
-        find.byKey(const ValueKey('sent-time-article')),
-      );
-      final receivedLabel = tester.widget<Text>(
-        find.byKey(const ValueKey('received-time-article')),
-      );
-      expect(sentLabel.data, fa ? '۱۱:۳۸:۰۶' : '11:38:06');
-      expect(receivedLabel.data, fa ? '۱۱:۳۸:۱۰' : '11:38:10');
-      expect(sentLabel.textDirection, TextDirection.ltr);
+      expect(find.byKey(const ValueKey('sent-time-article')), findsNothing);
       expect(find.text(fa ? 'نویسنده: الیاس' : 'By Elias'), findsOneWidget);
       expect(find.text(news['text'] as String), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -95,6 +125,30 @@ void main() {
           image.dispose();
         }
       });
+      await tester.tap(find.byKey(const ValueKey('news-details-article')));
+      await tester.pumpAndSettle();
+      final sentLabel = tester.widget<Text>(
+        find.byKey(const ValueKey('sent-time-article')),
+      );
+      final receivedLabel = tester.widget<Text>(
+        find.byKey(const ValueKey('received-time-article')),
+      );
+      final detailsBoundary = tester.renderObject<RenderRepaintBoundary>(
+        find.byKey(const ValueKey('news-details-preview')),
+      );
+      await tester.runAsync(() async {
+        final image = await detailsBoundary.toImage(pixelRatio: 2);
+        try {
+          final data = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File('artifacts/ui-news-details-${fa ? 'fa' : 'en'}.png')
+              .writeAsBytes(data!.buffer.asUint8List());
+        } finally {
+          image.dispose();
+        }
+      });
+      expect(sentLabel.data, fa ? '۱۱:۳۸:۰۶' : '11:38:06');
+      expect(receivedLabel.data, fa ? '۱۱:۳۸:۱۰' : '11:38:10');
+      expect(sentLabel.textDirection, TextDirection.ltr);
       await tester.tap(find.byKey(const ValueKey('sent-time-article')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.textContaining('UTC'), findsOneWidget);

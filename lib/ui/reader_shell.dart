@@ -24,6 +24,7 @@ import 'news_feed_view.dart';
 import 'reader_widgets.dart';
 import 'temporary_log.dart';
 import 'theme.dart';
+import 'settings_page.dart';
 
 class ReaderHome extends StatefulWidget {
   const ReaderHome({super.key, required this.app, required this.animateRadar});
@@ -40,6 +41,7 @@ class _ReaderState extends State<ReaderHome>
   String? trustPendingChannelId;
   String? trustErrorChannelId;
   bool discoverChannels = false;
+  bool unreadChannelsOnly = false;
   final channelSearch = TextEditingController();
   AppController get app => widget.app;
   @override
@@ -92,15 +94,15 @@ class _ReaderState extends State<ReaderHome>
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(22, 17, 16, 18),
+            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
             child: Row(
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: Image.asset(
                     'assets/brand/farvahar-mark.png',
-                    width: 44,
-                    height: 44,
+                    width: 38,
+                    height: 38,
                     fit: BoxFit.contain,
                   ),
                 ),
@@ -119,7 +121,7 @@ class _ReaderState extends State<ReaderHome>
                           maxLines: 1,
                           style: const TextStyle(
                             color: inkColor,
-                            fontSize: 21,
+                            fontSize: 19,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -162,22 +164,12 @@ class _ReaderState extends State<ReaderHome>
                 ),
                 IconButton(
                   key: const ValueKey('reader-settings'),
-                  tooltip: t('تنظیمات خبرخوان', 'Reader settings'),
-                  onPressed: () => showModalBottomSheet<void>(
-                    context: context,
-                    showDragHandle: true,
-                    useSafeArea: true,
-                    isScrollControlled: true,
-                    builder: (context) => AnimatedBuilder(
-                      animation: app,
-                      builder: (context, _) => SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                        child: ReaderSettingsCard(app: app),
-                      ),
-                    ),
+                  tooltip: t('تنظیمات', 'Settings'),
+                  onPressed: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(builder: (_) => SettingsPage(app: app)),
                   ),
                   icon: const Icon(
-                    Icons.notifications_none_rounded,
+                    Icons.settings_outlined,
                     color: mutedColor,
                     size: 21,
                   ),
@@ -258,6 +250,9 @@ class _ReaderState extends State<ReaderHome>
                           snapshot: snapshot,
                           fa: fa,
                           discoverChannels: discoverChannels,
+                          unreadOnly: unreadChannelsOnly,
+                          onUnreadChanged: (value) =>
+                              setState(() => unreadChannelsOnly = value),
                           channelSearch: channelSearch,
                           trustPendingChannelId: trustPendingChannelId,
                           trustErrorChannelId: trustErrorChannelId,
@@ -290,9 +285,9 @@ class _ReaderState extends State<ReaderHome>
                     return ListView.builder(
                       key: ValueKey('reader-$tab'),
                       padding: EdgeInsets.fromLTRB(
-                        tab == 1 ? 12 : 22,
+                        tab == 1 || tab == 2 ? 12 : 20,
                         4,
-                        tab == 1 ? 12 : 22,
+                        tab == 1 || tab == 2 ? 12 : 20,
                         28,
                       ),
                       itemCount: items.length,
@@ -333,10 +328,37 @@ class _ReaderState extends State<ReaderHome>
             label: t('اتصال', 'Connection'),
           ),
           NavigationDestination(
-            icon: Badge(
-              label: Text(n(app.unreadCount)),
-              isLabelVisible: app.unreadCount > 0,
-              child: const Icon(Icons.forum_outlined, size: 21),
+            icon: Semantics(
+              label: app.unreadCount > 0
+                  ? t(
+                      '${n(app.unreadCount)} خبر خوانده‌نشده در این گوشی',
+                      '${app.unreadCount} unread news on this phone',
+                    )
+                  : null,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.forum_outlined, size: 21),
+                  if (app.unreadCount > 0) ...[
+                    const SizedBox(width: 4),
+                    Badge(
+                      key: const ValueKey('total-unread'),
+                      backgroundColor: tealTextColor,
+                      label: ExcludeSemantics(
+                        child: Text(
+                          app.unreadCount > 99
+                              ? '${n(99)}+'
+                              : n(app.unreadCount),
+                          textDirection: TextDirection.ltr,
+                          textScaler: MediaQuery.textScalerOf(context)
+                              .clamp(maxScaleFactor: 1.15),
+                        ),
+                      ),
+                      isLabelVisible: app.unreadCount > 0,
+                    ),
+                  ],
+                ],
+              ),
             ),
             label: t('کانال‌ها', 'Channels'),
           ),
@@ -444,32 +466,41 @@ class _ReaderState extends State<ReaderHome>
       setState(() {
         tab = 1;
         discoverChannels = false;
+        unreadChannelsOnly = false;
         channelSearch.clear();
       });
+      final added = snapshot.channels
+          .where((c) => !before.contains(c.id))
+          .firstOrNull;
+      final protected = added?.recoverable == true;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           duration: const Duration(seconds: 12),
-          action: SnackBarAction(
-            label: t('ذخیرهٔ بازیابی', 'Save recovery'),
-            onPressed: () {
-              final added = snapshot.channels
-                  .where((c) => !before.contains(c.id))
-                  .firstOrNull;
-              if (added != null) {
-                Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        ChannelToolsPage(app: app, channelId: added.id),
-                  ),
-                );
-              }
-            },
-          ),
+          action: protected
+              ? null
+              : SnackBarAction(
+                  label: t('ذخیرهٔ بازیابی', 'Save recovery'),
+                  onPressed: () {
+                    if (added != null) {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ChannelToolsPage(app: app, channelId: added.id),
+                        ),
+                      );
+                    }
+                  },
+                ),
           content: Text(
-            t(
-              'کانال روی این دستگاه ساخته شد.',
-              'Channel created on this device.',
-            ),
+            protected
+                ? t(
+                    'کانال ساخته شد و فایل بازیابی ذخیره شد.',
+                    'Channel created and recovery kit saved.',
+                  )
+                : t(
+                    'کانال روی این دستگاه ساخته شد.',
+                    'Channel created on this device.',
+                  ),
           ),
         ),
       );

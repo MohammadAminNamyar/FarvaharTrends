@@ -1,11 +1,26 @@
 part of 'peer_engine.dart';
 
 extension ChannelManagement on PeerEngine {
-  bool _isOwner(SignedChannel channel) =>
-      channelKeys?.entries[channel.id]?['role'] == 'owner' ||
-      channel.ownedBy(publisherIdentity);
+  bool _isOwner(SignedChannel channel) {
+    final entry = channelKeys?.entries[channel.id];
+    if (channel.recoverable) {
+      if (entry?['role'] != 'owner' || entry?['authorization'] is! Map) {
+        return false;
+      }
+      final grant = ChannelControl.parse(
+        Map<String, dynamic>.from(entry!['authorization'] as Map),
+        channel,
+      );
+      return _store.authorityFor(channel.id)?.allows(grant) == true;
+    }
+    return entry?['role'] == 'owner' || channel.ownedBy(publisherIdentity);
+  }
+
   bool _canPublish(SignedChannel channel) {
     if (_store.policyFor(channel.id)?.deleted == true) return false;
+    if (channel.recoverable && _store.policyFor(channel.id) == null) {
+      return false;
+    }
     if (_isOwner(channel)) return true;
     final entry = channelKeys?.entries[channel.id];
     if (entry?['role'] != 'editor') return false;
@@ -14,6 +29,11 @@ extension ChannelManagement on PeerEngine {
       channel,
     );
     final policy = _store.policyFor(channel.id);
+    if (channel.recoverable &&
+        (policy == null ||
+            _store.authorityFor(channel.id)?.allows(grant) != true)) {
+      return false;
+    }
     return policy == null ||
         (policy.signerId == grant.signerId &&
             (policy.revision < grant.revision ||
@@ -184,6 +204,22 @@ extension ChannelManagement on PeerEngine {
           );
           if (policy.kind != 'policy') {
             throw const FormatException('Invalid recovery policy.');
+          }
+        }
+        if (channel.recoverable) {
+          final grant = ChannelControl.parse(
+            Map<String, dynamic>.from(entry['authorization'] as Map),
+            channel,
+          );
+          final known = _store.knownOwnerAuthority(channel);
+          if ((known != null &&
+                  !known
+                      .merge(OwnerAuthority.fromGrant(grant, channel))
+                      .allows(grant)) ||
+              (policy != null && policy.ownerGrant?.id != grant.id)) {
+            throw StateError(
+              'This backup does not match the current channel owner. Use the recovery kit.',
+            );
           }
         }
         await channelKeys!.put(entry);

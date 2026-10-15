@@ -109,7 +109,7 @@ class MetricTile extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         LegacyText(
-          value,
+          localizedDigits(value, fa: LanguageScope.isFarsi(context)),
           style: const TextStyle(
             color: inkColor,
             fontSize: 31,

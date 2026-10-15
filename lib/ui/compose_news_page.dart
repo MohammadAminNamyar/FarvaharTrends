@@ -33,7 +33,7 @@ class ComposeNewsPage extends StatefulWidget {
 class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
   final form = GlobalKey<FormState>();
   final text = TextEditingController();
-  late final nickname = TextEditingController(text: channel.writerNickname);
+  String get nickname => widget.app.writerNickname;
   late String selectedId = widget.selectedId;
   Uint8List? image;
   bool pickingImage = false;
@@ -49,7 +49,6 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
   @override
   void dispose() {
     text.dispose();
-    nickname.dispose();
     super.dispose();
   }
 
@@ -89,10 +88,10 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
       submissionError = null;
     });
     await widget.app.perform(() async {
-      if (nickname.text.trim() != channel.writerNickname) {
+      if (nickname != channel.writerNickname) {
         await widget.app.channelAction('setWriterNickname', {
           'channelId': selectedId,
-          'nickname': nickname.text,
+          'nickname': nickname,
         });
       }
       await (image == null
@@ -171,7 +170,6 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
                       ? null
                       : (value) => setState(() {
                           selectedId = value!;
-                          nickname.text = channel.writerNickname;
                         }),
                 ),
                 const SizedBox(height: 22),
@@ -265,35 +263,6 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
                   ),
                   const SizedBox(height: 14),
                 ],
-                const SizedBox(height: 16),
-                TextFormField(
-                  key: const ValueKey('writer-nickname'),
-                  controller: nickname,
-                  maxLength: 60,
-                  enabled: !submitting,
-                  decoration: InputDecoration(
-                    labelText: t(
-                      'نام مستعار نویسنده (اختیاری)',
-                      'Writer nickname (optional)',
-                    ),
-                    helperText: t(
-                      'زیر خبر نمایش داده می‌شود؛ نام واقعی لازم نیست.',
-                      'Shown below your news; no real name is required.',
-                    ),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) return null;
-                    try {
-                      validateNewsByline(value.trim());
-                      return null;
-                    } catch (_) {
-                      return t(
-                        'نام کوتاه و تک‌خطی وارد کنید.',
-                        'Enter a short, single-line nickname.',
-                      );
-                    }
-                  },
-                ),
                 const SizedBox(height: 12),
               ] else ...[
                 AppCard(
@@ -332,14 +301,11 @@ class _ComposeNewsPageState extends State<ComposeNewsPage> with Localized {
                         ),
                       ),
                       const Divider(height: 28),
-                      if (nickname.text.trim().isNotEmpty)
+                      if (nickname.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
                           child: Text(
-                            t(
-                              'نویسنده: ${nickname.text.trim()}',
-                              'By ${nickname.text.trim()}',
-                            ),
+                            t('نویسنده: $nickname', 'By $nickname'),
                             style: const TextStyle(
                               color: mutedColor,
                               fontSize: 12,

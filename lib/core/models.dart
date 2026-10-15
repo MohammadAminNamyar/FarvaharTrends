@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'channels.dart';
+import 'owner_authority.dart';
 import 'channel_control.dart';
 import 'media_store.dart';
 import 'identity.dart';
@@ -240,13 +241,25 @@ class SignedBulletin {
 
   /// Verifies publishing authority for this exact channel, even through a relay.
   /// Channel metadata identifies a key, not a trusted human/editorial source.
-  bool verifyForChannel(SignedChannel channel, {ChannelControl? policy}) {
+  bool verifyForChannel(
+    SignedChannel channel, {
+    ChannelControl? policy,
+    OwnerAuthority? ownerAuthority,
+  }) {
     if (channelId != channel.id ||
+        (policy != null && policy.channelId != channel.id) ||
         (policy != null && !policy.permits(id, sourceId, sequence))) {
       return false;
     }
+    if (channel.recoverable &&
+        (ownerAuthority == null ||
+            policy == null ||
+            !ownerAuthority.allows(policy))) {
+      return false;
+    }
     if (authorization == null) {
-      return sourceId == channel.ownerId &&
+      return !channel.recoverable &&
+          sourceId == channel.ownerId &&
           Identity.verify(
             channel.ownerCertificatePem,
             _envelope.bytes,
@@ -255,8 +268,11 @@ class SignedBulletin {
     }
     try {
       final proof = ChannelControl.parse(authorization!, channel);
+      if (channel.recoverable && !ownerAuthority!.allows(proof)) return false;
       String cert;
-      if (proof.kind == 'manager' && proof.managerId == sourceId) {
+      if (proof.kind == 'owner' && proof.ownerId == sourceId) {
+        cert = proof.ownerCertificate;
+      } else if (proof.kind == 'manager' && proof.managerId == sourceId) {
         cert = proof.managerCertificate;
       } else if (proof.kind == 'editor' && proof.editorId == sourceId) {
         if (policy != null &&

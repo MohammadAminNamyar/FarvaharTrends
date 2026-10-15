@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import '../app_controller.dart';
 import '../core/delivery_mode.dart';
 import '../core/snapshot_dto.dart';
-import 'channel_tools.dart';
 import 'live_radar.dart';
 import 'localization.dart';
 import 'reader_widgets.dart';
@@ -76,20 +75,21 @@ class ConnectionView with Localized {
   List<Widget> build(BuildContext context) {
     final connected = snapshot.connectedCount;
     return [
-      ReaderIntro(
-        t('خبر، زنده می‌ماند.', 'Keep the news moving.'),
-        t(
-          'یک اتصال کوچک. یک جریان مشترک.',
-          'A small connection. A shared flow.',
+      Text(
+        t('اتصال', 'Connection'),
+        style: const TextStyle(
+          color: inkColor,
+          fontSize: 23,
+          fontWeight: FontWeight.w800,
         ),
       ),
-      const SizedBox(height: 20),
+      const SizedBox(height: 14),
       Container(
         key: const ValueKey('discovery-card'),
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: inkColor,
-          borderRadius: BorderRadius.circular(25),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(22, 19, 22, 23),
@@ -239,8 +239,6 @@ class ConnectionView with Localized {
       ),
       const SizedBox(height: 20),
       _transportCard(),
-      const SizedBox(height: 16),
-      ReaderSettingsCard(app: app),
       const SizedBox(height: 20),
       ReaderNote(
         Icons.privacy_tip_outlined,

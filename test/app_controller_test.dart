@@ -270,6 +270,7 @@ void main() {
       expect(app.label, 'Recovered phone');
       expect(app.advertisedHost, '192.168.1.4');
       expect(app.languageCode, 'en');
+      expect(app.writerNickname, isEmpty);
       expect(
         await File('${directory.path}/display.json.bak').exists(),
         isFalse,
@@ -293,6 +294,7 @@ void main() {
         'label': 'New phone',
         'host': '192.168.1.5',
         'languageCode': 'en',
+        'writerNickname': '',
       });
       await Directory('${directory.path}/display.json.next').create();
       await expectLater(
@@ -306,6 +308,61 @@ void main() {
         throwsA(isA<FileSystemException>()),
       );
       expect(app.languageCode, 'en');
+      app.dispose();
+    },
+  );
+
+  test(
+    'Writer nickname persists across restart and other display changes',
+    () async {
+      final app = controller(_Engine(directory, identity));
+      await app.setWriterNickname('  روزبه  ');
+      await Future.wait([
+        app.setLanguageCode('en'),
+        app.saveDisplay('Connection label', ''),
+      ]);
+      expect(app.writerNickname, 'روزبه');
+      expect(app.ownCard().name, 'Connection label');
+      final fresh = controller(_Engine(directory, identity));
+      await fresh.loadDisplaySettings();
+      expect(fresh.writerNickname, 'روزبه');
+      expect(fresh.languageCode, 'en');
+      await fresh.setWriterNickname('');
+      expect(
+        (await DisplaySettingsStore(
+          directory,
+          identity,
+        ).load())!['writerNickname'],
+        isEmpty,
+      );
+      fresh.dispose();
+      app.dispose();
+    },
+  );
+
+  test(
+    'Invalid or unsaved nicknames cannot replace the committed name',
+    () async {
+      final app = controller(_Engine(directory, identity));
+      await app.setWriterNickname('روزبه');
+      await expectLater(app.setWriterNickname('x' * 61), throwsFormatException);
+      await expectLater(
+        app.setWriterNickname('hidden\u202ename'),
+        throwsFormatException,
+      );
+      await Directory('${directory.path}/display.json.next').create();
+      await expectLater(
+        app.setWriterNickname('Unsaved'),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(app.writerNickname, 'روزبه');
+      expect(
+        (await DisplaySettingsStore(
+          directory,
+          identity,
+        ).load())!['writerNickname'],
+        'روزبه',
+      );
       app.dispose();
     },
   );

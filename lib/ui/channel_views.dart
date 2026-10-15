@@ -18,12 +18,14 @@ class ChannelOptions extends StatelessWidget with Localized {
     required this.trusted,
     required this.busy,
     this.muted = false,
+    this.onPublish,
     required this.onSelected,
   });
   final Map<String, dynamic> channel;
   @override
   final bool fa;
   final bool trusted, busy, muted;
+  final VoidCallback? onPublish;
   final ValueChanged<String> onSelected;
 
   @override
@@ -57,6 +59,12 @@ class ChannelOptions extends StatelessWidget with Localized {
                 context: context,
                 position: position,
                 items: [
+                  if (onPublish != null)
+                    PopupMenuItem(
+                      key: ValueKey('channel-compose-$id'),
+                      value: 'publish',
+                      child: Text(t('نوشتن خبر', 'Write news')),
+                    ),
                   if (channel['owned'] == true)
                     PopupMenuItem(
                       value: 'manage',
@@ -99,7 +107,13 @@ class ChannelOptions extends StatelessWidget with Localized {
                   ),
                 ],
               );
-              if (context.mounted && selected != null) onSelected(selected);
+              if (context.mounted && selected != null) {
+                if (selected == 'publish') {
+                  onPublish?.call();
+                } else {
+                  onSelected(selected);
+                }
+              }
             },
     );
   }
@@ -279,7 +293,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
           : t('هنوز ارزیابی نکرده‌اید', 'Not assessed');
       return Scaffold(
         key: ValueKey('channel-page-${widget.channelId}'),
-        backgroundColor: const Color(0xFFEDF3F4),
+        backgroundColor: canvasColor,
         appBar: AppBar(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,
@@ -371,7 +385,16 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              t('هنوز خبری منتشر نشده', 'No news here yet'),
+                              channel.recoverable &&
+                                      channel.ownerAuthorityState != 'known'
+                                  ? t(
+                                      'در انتظار مجوز معتبر کانال',
+                                      'Waiting for valid channel authority',
+                                    )
+                                  : t(
+                                      'هنوز خبری منتشر نشده',
+                                      'No news here yet',
+                                    ),
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 17,
@@ -379,10 +402,22 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              t(
-                                'خبرهای ذخیره‌شدهٔ این کانال اینجا نمایش داده می‌شوند.',
-                                'Saved news from this channel will appear here.',
-                              ),
+                              channel.recoverable &&
+                                      channel.ownerAuthorityState == 'conflict'
+                                  ? t(
+                                      'دو مجوز مالکیت ناسازگار دریافت شده است. انتشار تا دریافت مجوز بازیابی تازه متوقف می‌ماند.',
+                                      'Conflicting owner grants were received. Publishing stays stopped until a newer recovery grant arrives.',
+                                    )
+                                  : channel.recoverable &&
+                                        channel.ownerAuthorityState == 'unknown'
+                                  ? t(
+                                      'مجوز انتشار هنوز به این گوشی نرسیده است. با برقراری مسیر، دوباره بررسی می‌شود.',
+                                      'Publishing authority has not reached this phone yet. It will be checked again when a route is available.',
+                                    )
+                                  : t(
+                                      'خبرهای ذخیره‌شدهٔ این کانال اینجا نمایش داده می‌شوند.',
+                                      'Saved news from this channel will appear here.',
+                                    ),
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                 color: mutedColor,
@@ -405,6 +440,7 @@ class _ChannelNewsPageState extends State<ChannelNewsPage>
                           child: NewsCard(
                             news: b.raw,
                             channel: channel.raw,
+                            showChannelHeader: false,
                             fa: fa,
                             assessment: assessment,
                             onRemove: owned && !app.busy

@@ -62,7 +62,7 @@ class _LiveRadarState extends State<LiveRadar>
   Widget build(BuildContext context) => Semantics(
     label: '${widget.number} ${widget.caption}',
     child: SizedBox(
-      height: 184,
+      height: 160,
       width: double.infinity,
       child: AnimatedBuilder(
         animation: motion,
@@ -116,7 +116,7 @@ class _RadarPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width * .45, 82.0);
+    final radius = math.min(size.width * .45, size.height * .44);
     final line = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = .8

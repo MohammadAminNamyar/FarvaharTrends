@@ -301,6 +301,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('My public channel'), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('channel-menu-$channelId')));
+      await tester.pumpAndSettle();
       expect(
         find.byKey(ValueKey('channel-compose-$channelId')),
         findsOneWidget,

@@ -8,7 +8,8 @@ import 'channels.dart';
 import 'identity.dart';
 
 /// Public, channel-scoped authority. Never contains a private signing key.
-/// A manager certificate lets legacy channels gain independent recovery keys.
+/// A legacy manager certificate delegates authority; it cannot revoke a stolen
+/// legacy owner key. V2 owner grants are signed by the precommitted recovery key.
 class ChannelControl {
   ChannelControl._(this._json, this.body, this.authority);
   final Map<String, dynamic> _json;
@@ -39,6 +40,14 @@ class ChannelControl {
   String get managerCertificate => body['managerCertificatePem'] as String;
   String get editorId => Identity.certificateId(editorCertificate);
   String get managerId => Identity.certificateId(managerCertificate);
+  String get ownerCertificate => body['ownerCertificatePem'] as String;
+  String get ownerId => Identity.certificateId(ownerCertificate);
+  ChannelControl? get ownerGrant => kind == 'owner'
+      ? this
+      : authority?.kind == 'owner'
+      ? authority
+      : null;
+  int get generation => ownerGrant?.body['generation'] as int? ?? 0;
   Map<String, dynamic> toJson() =>
       jsonDecode(jsonEncode(_json)) as Map<String, dynamic>;
 
@@ -50,12 +59,13 @@ class ChannelControl {
     ChannelControl? authority,
   }) {
     final body = <String, dynamic>{
-      'version': 1,
+      'version': channel.recoverable ? 2 : 1,
       'kind': kind,
-      'domain': 'farvahartrends/channel-$kind/v1',
+      'domain': 'farvahartrends/channel-$kind/v${channel.recoverable ? 2 : 1}',
       'channelId': channel.id,
       'signerId': signer.id,
       ...data,
+      if (channel.recoverable && kind != 'owner') 'ownerGrantId': authority?.id,
     };
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(body)));
     return parse({
@@ -111,6 +121,11 @@ class ChannelControl {
       if (value is! Map<String, dynamic>) throw const FormatException();
       final kind = value['kind'];
       final extra = switch (kind) {
+        'owner' when channel.recoverable => {
+          'ownerCertificatePem',
+          'generation',
+          'nonce',
+        },
         'manager' => {'managerCertificatePem', 'nonce'},
         'editor' => {'editorCertificatePem', 'label', 'revision', 'nonce'},
         'policy' => {
@@ -129,22 +144,28 @@ class ChannelControl {
         'domain',
         'channelId',
         'signerId',
+        if (channel.recoverable && kind != 'owner') 'ownerGrantId',
         ...extra,
       };
       if (value.length != fields.length ||
           !value.keys.every(fields.contains) ||
           value['version'] is! int ||
-          value['version'] != 1 ||
-          value['domain'] != 'farvahartrends/channel-$kind/v1' ||
+          value['version'] != (channel.recoverable ? 2 : 1) ||
+          value['domain'] !=
+              'farvahartrends/channel-$kind/v${channel.recoverable ? 2 : 1}' ||
           value['channelId'] != channel.id ||
           value['signerId'] != Identity.certificateId(certificate) ||
           !Identity.verify(certificate, bytes, signature)) {
         throw const FormatException();
       }
       ChannelControl? authority;
+      if (channel.recoverable && kind == 'manager') {
+        throw const FormatException();
+      }
       if (json.containsKey('authority')) {
         if (nested ||
             kind == 'manager' ||
+            kind == 'owner' ||
             json['authority'] is! Map<String, dynamic>) {
           throw const FormatException();
         }
@@ -153,14 +174,20 @@ class ChannelControl {
           channel,
           nested: true,
         );
-        if (authority.kind != 'manager' ||
-            authority.managerId != value['signerId']) {
+        if (channel.recoverable
+            ? authority.kind != 'owner' ||
+                  authority.ownerId != value['signerId'] ||
+                  value['ownerGrantId'] != authority.id
+            : authority.kind != 'manager' ||
+                  authority.managerId != value['signerId']) {
           throw const FormatException();
         }
-      } else if (value['signerId'] != channel.ownerId) {
+      } else if (channel.recoverable
+          ? kind != 'owner' || value['signerId'] != channel.recoveryId
+          : value['signerId'] != channel.ownerId) {
         throw const FormatException();
       }
-      if (kind == 'manager' || kind == 'editor') {
+      if (kind == 'manager' || kind == 'editor' || kind == 'owner') {
         final nonce = value['nonce'];
         if (nonce is! String ||
             !RegExp(r'^[A-Za-z0-9_-]{22}$').hasMatch(nonce) ||
@@ -169,11 +196,18 @@ class ChannelControl {
           throw const FormatException();
         }
         final cert =
-            value[kind == 'manager'
-                ? 'managerCertificatePem'
-                : 'editorCertificatePem'];
+            value[switch (kind) {
+              'manager' => 'managerCertificatePem',
+              'owner' => 'ownerCertificatePem',
+              _ => 'editorCertificatePem',
+            }];
         if (cert is! String) throw const FormatException();
         Identity.publicKeyFromCertificate(cert);
+        if (kind == 'owner' &&
+            (!_integer(value['generation'], 1) ||
+                Identity.certificateId(cert) == channel.recoveryId)) {
+          throw const FormatException();
+        }
       }
       if (kind == 'editor') {
         final label = value['label'];
@@ -185,7 +219,9 @@ class ChannelControl {
           throw const FormatException();
         }
       }
-      if (kind != 'manager' && !_integer(value['revision'], 1)) {
+      if (kind != 'manager' &&
+          kind != 'owner' &&
+          !_integer(value['revision'], 1)) {
         throw const FormatException();
       }
       if (kind == 'policy' &&

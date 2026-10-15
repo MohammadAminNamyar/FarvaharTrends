@@ -61,9 +61,15 @@ void main() {
           findsNothing,
         );
         expect(find.textContaining('مسیر دریافت این خبر قدیمی'), findsNothing);
+        await tester.tap(find.byKey(ValueKey('news-details-${'b' * 64}')));
+        await tester.pumpAndSettle();
         expect(find.byKey(ValueKey('remove-news-${'b' * 64}')), findsOneWidget);
+        await tester.tap(find.byTooltip(language == 'fa' ? 'بستن' : 'Close'));
+        await tester.pumpAndSettle();
         (app.snapshot['bulletins'] as List).single['receivedVia'] = 'overlay';
         app.notifyListeners();
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(ValueKey('news-details-${'b' * 64}')));
         await tester.pumpAndSettle();
         expect(
           find.text(

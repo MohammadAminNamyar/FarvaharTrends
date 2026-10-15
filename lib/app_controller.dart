@@ -177,7 +177,7 @@ void serviceMain(ServiceInstance service) async {
           preferences.blocked,
         );
         engine?.imageMode = reader!.images;
-        engine?.setProtectedChannelIds(
+        await engine?.setProtectedChannelIds(
           followed.difference(preferences.blocked),
         );
         final count = news
@@ -279,6 +279,23 @@ void serviceMain(ServiceInstance service) async {
               command['channelId'] as String,
               command['password'] as String,
             );
+          case 'prepareProtectedChannel':
+            result = await engine!.prepareProtectedChannel(
+              name: command['name'] as String,
+              description: command['description'] as String,
+              password: command['password'] as String,
+            );
+          case 'prepareOwnerRecovery':
+            result = await engine!.prepareOwnerRecovery(
+              command['file'] as String,
+              command['password'] as String,
+            );
+          case 'commitProtectedChannel':
+            result = await engine!.commitProtectedChannel(
+              command['token'] as String,
+            );
+          case 'cancelProtectedChannel':
+            await engine!.cancelProtectedChannel(command['token'] as String);
           case 'restoreChannelRecovery':
             result = await engine!.restoreChannelRecovery(
               command['file'] as String,
@@ -596,6 +613,7 @@ class AppController extends ChangeNotifier {
   String label = 'Test phone';
   String advertisedHost = '';
   String languageCode = 'fa';
+  String writerNickname = '';
   String get appVersion => _appVersion;
   BootstrapConfig _bootstrapConfig = BootstrapConfig.empty;
   BootstrapStore? _bootstrapStore;
@@ -1359,6 +1377,7 @@ class AppController extends ChangeNotifier {
       label = settings['label']!;
       advertisedHost = settings['host']!;
       languageCode = settings['languageCode']!;
+      writerNickname = settings['writerNickname'] ?? '';
     }
     if (store.recovered) {
       error = languageCode == 'fa'
@@ -1377,6 +1396,7 @@ class AppController extends ChangeNotifier {
       'label': card.name,
       'host': card.host,
       'languageCode': languageCode,
+      'writerNickname': writerNickname,
     });
     label = card.name;
     advertisedHost = card.host;
@@ -1389,10 +1409,12 @@ class AppController extends ChangeNotifier {
     }
     await _saveSettings(() async {
       if (_directory != null) {
-        await DisplaySettingsStore(
-          _directory!,
-          identity!,
-        ).save({'label': label, 'host': advertisedHost, 'languageCode': value});
+        await DisplaySettingsStore(_directory!, identity!).save({
+          'label': label,
+          'host': advertisedHost,
+          'languageCode': value,
+          'writerNickname': writerNickname,
+        });
       }
       languageCode = value;
       await _readerSettingsChanged();
@@ -1402,6 +1424,22 @@ class AppController extends ChangeNotifier {
 
   Set<String> get blockedChannelIds =>
       _channelPreferences?.blocked ?? const <String>{};
+
+  Future<void> setWriterNickname(String value) => _saveSettings(() async {
+    final clean = value.trim();
+    if (clean.isNotEmpty) validateNewsByline(clean);
+    if (_directory == null || identity == null) {
+      throw StateError('Display settings are not ready.');
+    }
+    await DisplaySettingsStore(_directory!, identity!).save({
+      'label': label,
+      'host': advertisedHost,
+      'languageCode': languageCode,
+      'writerNickname': clean,
+    });
+    writerNickname = clean;
+    notifyListeners();
+  });
 
   Set<String> get followedChannelIds {
     final followed = <String>{...?_channelPreferences?.followed};
@@ -1545,7 +1583,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _readerSettingsChanged() async {
-    _local?.setProtectedChannelIds(followedChannelIds);
+    await _local?.setProtectedChannelIds(followedChannelIds);
     if (Platform.isAndroid && activeMode && await _service.isRunning()) {
       await _send('readerSettings', {'language': languageCode});
     }
@@ -1586,6 +1624,23 @@ class AppController extends ChangeNotifier {
     } else {
       _local ??= _makeEngine();
       switch (action) {
+        case 'prepareProtectedChannel':
+          result = await _local!.prepareProtectedChannel(
+            name: args['name'] as String,
+            description: args['description'] as String,
+            password: args['password'] as String,
+          );
+        case 'prepareOwnerRecovery':
+          result = await _local!.prepareOwnerRecovery(
+            args['file'] as String,
+            args['password'] as String,
+          );
+        case 'commitProtectedChannel':
+          result = await _local!.commitProtectedChannel(
+            args['token'] as String,
+          );
+        case 'cancelProtectedChannel':
+          await _local!.cancelProtectedChannel(args['token'] as String);
         case 'exportChannelRecovery':
           result = await _local!.exportChannelRecovery(
             args['channelId'] as String,
@@ -1723,7 +1778,12 @@ class AppController extends ChangeNotifier {
     });
     try {
       return await done.future.timeout(
-        Duration(seconds: action.contains('Recovery') ? 120 : 25),
+        Duration(
+          seconds:
+              action.contains('Recovery') || action == 'prepareProtectedChannel'
+              ? 120
+              : 25,
+        ),
       );
     } finally {
       _commands.remove(requestId);
@@ -1783,7 +1843,9 @@ class DisplaySettingsStore {
         value['host'] is! String ||
         (value['languageCode'] != null &&
             value['languageCode'] != 'fa' &&
-            value['languageCode'] != 'en')) {
+            value['languageCode'] != 'en') ||
+        (value['writerNickname'] != null &&
+            value['writerNickname'] is! String)) {
       throw const FormatException('Invalid display settings.');
     }
     final card = PeerCard(
@@ -1791,10 +1853,13 @@ class DisplaySettingsStore {
       host: value['host'] as String,
       certificatePem: identity.certPem,
     );
+    final nickname = value['writerNickname'] as String? ?? '';
+    if (nickname.isNotEmpty) validateNewsByline(nickname);
     return {
       'label': card.name,
       'host': card.host,
       'languageCode': value['languageCode'] as String? ?? 'fa',
+      'writerNickname': nickname,
     };
   }
 

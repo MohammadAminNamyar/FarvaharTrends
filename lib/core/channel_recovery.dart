@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:pointycastle/export.dart';
 
 import 'channel_key_store.dart';
+import 'channels.dart';
+import 'identity.dart';
 
 /// Portable encrypted recovery, independent of any server or device keystore.
 /// Public parameters are fixed before expensive work to reject hostile imports.
@@ -24,6 +26,47 @@ class ChannelRecovery {
   static final _aad = Uint8List.fromList(
     utf8.encode('farvahartrends/channel-recovery/v1'),
   );
+  static final _ownerAad = Uint8List.fromList(
+    utf8.encode('farvahartrends/channel-owner-recovery/v2'),
+  );
+  static Future<String> encryptOwnerKitAsync(
+    Map<String, dynamic> material,
+    String password,
+  ) => Isolate.run(() => encryptOwnerKit(material, password));
+  static Future<Map<String, dynamic>> decryptOwnerKitAsync(
+    String file,
+    String password,
+  ) => Isolate.run(() => _decrypt(file, password, ownerKit: true));
+
+  static void _validateOwnerKit(Map<String, dynamic> material) {
+    const fields = {'channel', 'recoveryIdentity', 'generation'};
+    if (material.length != fields.length ||
+        !material.keys.every(fields.contains) ||
+        material['generation'] is! int ||
+        material['generation'] < 1 ||
+        material['generation'] > 9007199254740991) {
+      throw const FormatException('Invalid owner recovery kit.');
+    }
+    final channel = SignedChannel.fromJson(
+      Map<String, dynamic>.from(material['channel'] as Map),
+    );
+    final recovery = Identity.fromJson(
+      Map<String, dynamic>.from(material['recoveryIdentity'] as Map),
+    );
+    if (!channel.recoverable || recovery.id != channel.recoveryId) {
+      throw const FormatException('Recovery key does not match this channel.');
+    }
+  }
+
+  static String encryptOwnerKit(
+    Map<String, dynamic> material,
+    String password,
+  ) {
+    validatePassword(password);
+    _validateOwnerKit(material);
+    return _encrypt(material, password, ownerKit: true);
+  }
+
   static Uint8List _random(int count) {
     final random = Random.secure();
     return Uint8List.fromList(List.generate(count, (_) => random.nextInt(256)));
@@ -68,6 +111,14 @@ class ChannelRecovery {
     if ((material['entry'] as Map)['role'] != 'owner') {
       throw const FormatException('Only owners can create a recovery file.');
     }
+    return _encrypt(material, password);
+  }
+
+  static String _encrypt(
+    Map<String, dynamic> material,
+    String password, {
+    bool ownerKit = false,
+  }) {
     final salt = _random(16),
         nonce = _random(12),
         plain = Uint8List.fromList(utf8.encode(jsonEncode(material)));
@@ -77,11 +128,19 @@ class ChannelRecovery {
         throw const FormatException('Recovery material is too large.');
       }
       final cipher = GCMBlockCipher(AESEngine())
-        ..init(true, AEADParameters(KeyParameter(key), 128, nonce, _aad));
+        ..init(
+          true,
+          AEADParameters(
+            KeyParameter(key),
+            128,
+            nonce,
+            ownerKit ? _ownerAad : _aad,
+          ),
+        );
       final encrypted = cipher.process(plain);
       return jsonEncode({
-        'version': 1,
-        'kind': 'channel-recovery',
+        'version': ownerKit ? 2 : 1,
+        'kind': ownerKit ? 'channel-owner-recovery' : 'channel-recovery',
         'kdf': 'argon2id-1.3',
         'memoryKiB': memoryKiB,
         'iterations': iterations,
@@ -97,7 +156,14 @@ class ChannelRecovery {
     }
   }
 
-  static Map<String, dynamic> decrypt(String file, String password) {
+  static Map<String, dynamic> decrypt(String file, String password) =>
+      _decrypt(file, password);
+
+  static Map<String, dynamic> _decrypt(
+    String file,
+    String password, {
+    bool ownerKit = false,
+  }) {
     Uint8List? key, plain;
     try {
       if (utf8.encode(file).length > maxFileBytes ||
@@ -120,8 +186,10 @@ class ChannelRecovery {
       if (json is! Map<String, dynamic> ||
           json.length != fields.length ||
           !json.keys.every(fields.contains) ||
-          json['version'] != 1 ||
-          json['kind'] != 'channel-recovery' ||
+          json['version'] is! int ||
+          json['version'] != (ownerKit ? 2 : 1) ||
+          json['kind'] !=
+              (ownerKit ? 'channel-owner-recovery' : 'channel-recovery') ||
           json['kdf'] != 'argon2id-1.3' ||
           json['memoryKiB'] != memoryKiB ||
           json['iterations'] != iterations ||
@@ -143,9 +211,22 @@ class ChannelRecovery {
       }
       key = _key(password, salt);
       final cipher = GCMBlockCipher(AESEngine())
-        ..init(false, AEADParameters(KeyParameter(key), 128, nonce, _aad));
+        ..init(
+          false,
+          AEADParameters(
+            KeyParameter(key),
+            128,
+            nonce,
+            ownerKit ? _ownerAad : _aad,
+          ),
+        );
       plain = cipher.process(encrypted);
       final material = jsonDecode(utf8.decode(plain));
+      if (ownerKit) {
+        if (material is! Map<String, dynamic>) throw const FormatException();
+        _validateOwnerKit(material);
+        return material;
+      }
       if (material is! Map<String, dynamic> ||
           material.length != 3 ||
           material['entry'] is! Map ||

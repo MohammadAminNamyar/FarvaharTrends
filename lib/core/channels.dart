@@ -9,6 +9,7 @@ import 'identity.dart';
 const int maxChannelNameLength = 80;
 const int maxChannelDescriptionLength = 500;
 const String channelSigningDomain = 'farvahartrends/channel/v1';
+const String protectedChannelSigningDomain = 'farvahartrends/channel/v2';
 // Dart DateTime supports at most 100,000,000 days from the Unix epoch.
 // Wider JSON-safe integers are valid sequences, but invalid display timestamps.
 const int maxSignedWallTimeMs = 8640000000000000;
@@ -17,7 +18,8 @@ final RegExp _fingerprint = RegExp(r'^[0-9a-f]{64}$');
 /// Immutable, self-authenticating channel metadata.
 ///
 /// The embedded certificate identifies a key, not a trusted human or newsroom.
-/// Editing metadata creates another channel ID; v1 has no ownership transfer.
+/// Editing metadata creates another channel ID. V2 precommits an independent
+/// recovery certificate; its owner generations require recovery-signed grants.
 class SignedChannel {
   SignedChannel._(
     this.id,
@@ -37,12 +39,15 @@ class SignedChannel {
     Identity identity, {
     required String name,
     String description = '',
+    String? recoveryCertificatePem,
   }) {
     final random = Random.secure();
     final body = <String, dynamic>{
-      'version': 1,
+      'version': recoveryCertificatePem == null ? 1 : 2,
       'kind': 'channel',
-      'domain': channelSigningDomain,
+      'domain': recoveryCertificatePem == null
+          ? channelSigningDomain
+          : protectedChannelSigningDomain,
       'nonce': base64UrlEncode(
         List<int>.generate(16, (_) => random.nextInt(256)),
       ).replaceAll('=', ''),
@@ -50,13 +55,16 @@ class SignedChannel {
       'createdAtMs': DateTime.now().toUtc().millisecondsSinceEpoch,
       'name': name.trim(),
       'description': description.trim(),
+      'recoveryCertificatePem': ?recoveryCertificatePem,
     };
     _validateBody(body);
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(body)));
     return SignedChannel.fromJson({
       'id': sha256.convert(bytes).toString(),
       'payloadBase64': base64Encode(bytes),
-      'signature': identity.sign(_signingBytes(bytes)),
+      'signature': identity.sign(
+        _signingBytes(bytes, body['domain'] as String),
+      ),
       'ownerCertificatePem': identity.certPem,
     });
   }
@@ -110,7 +118,11 @@ class SignedChannel {
       _validateBody(decoded);
       final ownerId = decoded['ownerId'] as String;
       if (Identity.certificateId(certificate) != ownerId ||
-          !Identity.verify(certificate, _signingBytes(bytes), signature)) {
+          !Identity.verify(
+            certificate,
+            _signingBytes(bytes, decoded['domain'] as String),
+            signature,
+          )) {
         throw const FormatException('Invalid channel owner signature.');
       }
       return SignedChannel._(
@@ -130,6 +142,12 @@ class SignedChannel {
   String get name => _body['name'] as String;
   String get description => _body['description'] as String;
   String get ownerId => _body['ownerId'] as String;
+  bool get recoverable => _body['version'] == 2;
+  String? get recoveryCertificatePem =>
+      _body['recoveryCertificatePem'] as String?;
+  String? get recoveryId => recoveryCertificatePem == null
+      ? null
+      : Identity.certificateId(recoveryCertificatePem!);
   int get createdAtMs => _body['createdAtMs'] as int;
   bool ownedBy(Identity identity) => ownerId == identity.id;
 
@@ -141,11 +159,12 @@ class SignedChannel {
   };
 }
 
-Uint8List _signingBytes(List<int> payload) =>
-    Uint8List.fromList([...utf8.encode('$channelSigningDomain\n'), ...payload]);
+Uint8List _signingBytes(List<int> payload, String domain) =>
+    Uint8List.fromList([...utf8.encode('$domain\n'), ...payload]);
 
 void _validateBody(Map<String, dynamic> body) {
-  const fields = {
+  final protected = body['version'] == 2;
+  final fields = {
     'version',
     'kind',
     'domain',
@@ -154,6 +173,7 @@ void _validateBody(Map<String, dynamic> body) {
     'createdAtMs',
     'name',
     'description',
+    if (protected) 'recoveryCertificatePem',
   };
   if (body.length != fields.length || !body.keys.every(fields.contains)) {
     throw const FormatException('Unexpected channel metadata fields.');
@@ -164,9 +184,10 @@ void _validateBody(Map<String, dynamic> body) {
   final description = body['description'];
   final nonce = body['nonce'];
   if (body['version'] is! int ||
-      body['version'] != 1 ||
+      (body['version'] != 1 && !protected) ||
       body['kind'] != 'channel' ||
-      body['domain'] != channelSigningDomain ||
+      body['domain'] !=
+          (protected ? protectedChannelSigningDomain : channelSigningDomain) ||
       owner is! String ||
       !_fingerprint.hasMatch(owner) ||
       created is! int ||
@@ -191,5 +212,12 @@ void _validateBody(Map<String, dynamic> body) {
   if (nonceBytes.length != 16 ||
       base64UrlEncode(nonceBytes).replaceAll('=', '') != nonce) {
     throw const FormatException('Invalid channel nonce.');
+  }
+  if (protected) {
+    final recovery = body['recoveryCertificatePem'];
+    if (recovery is! String || Identity.certificateId(recovery) == owner) {
+      throw const FormatException('An independent recovery key is required.');
+    }
+    Identity.publicKeyFromCertificate(recovery);
   }
 }

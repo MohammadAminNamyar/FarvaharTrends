@@ -128,9 +128,56 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('share-starting-peers')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('qr-starting-peers')), findsOneWidget);
-    expect(find.text('1 starting peers · 1 DHT nodes'), findsOneWidget);
+    expect(find.text('1 starting peers · 1 discovery nodes'), findsOneWidget);
+    expect(find.byKey(const ValueKey('starting-peers-text')), findsNothing);
+    expect(find.text(small), findsNothing);
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('copy-starting-peers')));
+    await tester.pumpAndSettle();
+    expect(copied, small);
     expect(tester.takeException(), isNull);
   });
+
+  for (final language in ['fa', 'en']) {
+    testWidgets('$language empty starting-peer list has no QR or copy action', (
+      tester,
+    ) async {
+      await showPeers(tester, language: language);
+      await tester.tap(find.byKey(const ValueKey('share-starting-peers')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('starting-peers-empty')),
+        findsOneWidget,
+      );
+      expect(find.byType(QrImageView), findsNothing);
+      expect(find.byKey(const ValueKey('copy-starting-peers')), findsNothing);
+      expect(find.byKey(const ValueKey('starting-peers-text')), findsNothing);
+      expect(
+        find.textContaining(
+          language == 'fa'
+              ? 'هنوز همتای شروعی برای اشتراک ندارید'
+              : 'No starting peers to share yet',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   Future<void> importText(WidgetTester tester, String text) async {
     await tester.tap(find.text('Import a peer card or starting-peer list'));

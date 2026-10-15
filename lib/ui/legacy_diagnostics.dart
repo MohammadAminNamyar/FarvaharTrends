@@ -106,7 +106,8 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   ),
                   const AppTag('PILOT', color: goldColor),
                   IconButton(
-                    tooltip: 'Pilot guide',
+                    key: const ValueKey('pilot-guide'),
+                    tooltip: diagnostic(context, 'Pilot guide'),
                     onPressed: _guide,
                     icon: const Icon(
                       Icons.help_outline_rounded,
@@ -841,24 +842,63 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   ),
                   const SizedBox(height: 17),
                   const Divider(height: 1),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 9,
-                    runSpacing: 5,
-                    children: [
-                      LegacyText(
-                        'Run ${item['runId']}',
-                        style: const TextStyle(color: mutedColor, fontSize: 9),
+                  Material(
+                    color: Colors.transparent,
+                    child: ExpansionTile(
+                      key: ValueKey('test-news-details-${item['id']}'),
+                      tilePadding: EdgeInsets.zero,
+                      title: Text(
+                        tr(
+                          isFarsiLanguage(app.languageCode),
+                          'جزئیات آزمایش',
+                          'Test details',
+                        ),
+                        style: const TextStyle(fontSize: 11, color: mutedColor),
                       ),
-                      LegacyText(
-                        '№ ${item['sequence']}',
-                        style: const TextStyle(color: mutedColor, fontSize: 9),
-                      ),
-                      LegacyText(
-                        'Source ${_short(item['sourceId'])}',
-                        style: const TextStyle(color: mutedColor, fontSize: 9),
-                      ),
-                    ],
+                      children: [
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            tr(
+                              isFarsiLanguage(app.languageCode),
+                              'برچسب آزمایش',
+                              'Test label',
+                            ),
+                          ),
+                          subtitle: Text('${item['runId']}'),
+                        ),
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            tr(
+                              isFarsiLanguage(app.languageCode),
+                              'شمارهٔ پیام',
+                              'Message sequence',
+                            ),
+                          ),
+                          subtitle: Text(
+                            localizedDigits(
+                              item['sequence'],
+                              fa: isFarsiLanguage(app.languageCode),
+                            ),
+                          ),
+                        ),
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            tr(
+                              isFarsiLanguage(app.languageCode),
+                              'شناسهٔ کوتاه کلید فرستنده',
+                              'Short signing-key ID',
+                            ),
+                          ),
+                          subtitle: Text(
+                            _short(item['sourceId']),
+                            textDirection: TextDirection.ltr,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -1229,21 +1269,25 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   'A starting-peer list only introduces dialing addresses. It cannot sign news or change what this phone shares. Share it with people you know; it stays on this phone otherwise.',
                 ),
                 const SizedBox(height: 12),
-                LegacyText(
-                  config.isEmpty
-                      ? 'Nothing shareable yet: give your card a public address or wait for helper contacts.'
-                      : '${config.peers.length} starting peers · ${config.dhtBootstrap.length} DHT nodes',
-                  style: const TextStyle(color: mutedColor, fontSize: 11),
-                ),
-                const SizedBox(height: 18),
-                _QrPanel(document, keyName: 'starting-peers'),
-                const SizedBox(height: 18),
-                SelectableText(
-                  document,
-                  key: const ValueKey('starting-peers-text'),
-                  style: const TextStyle(fontSize: 9, color: mutedColor),
-                  maxLines: 8,
-                ),
+                if (config.isEmpty)
+                  const LegacyText(
+                    'No starting peers to share yet. Keep receiving on; contacts may become available when reachable helper peers are found.',
+                    key: ValueKey('starting-peers-empty'),
+                    style: TextStyle(color: mutedColor, fontSize: 12),
+                  )
+                else ...[
+                  Text(
+                    tr(
+                      LanguageScope.isFarsi(dialogContext),
+                      '${persianDigits('${config.peers.length}')} همتای شروع · ${persianDigits('${config.dhtBootstrap.length}')} همتای کشف',
+                      '${config.peers.length} starting peers · ${config.dhtBootstrap.length} discovery nodes',
+                    ),
+                    key: const ValueKey('starting-peers-summary'),
+                    style: const TextStyle(color: mutedColor, fontSize: 12),
+                  ),
+                  const SizedBox(height: 18),
+                  _QrPanel(document, keyName: 'starting-peers'),
+                ],
               ],
             ),
           ),
@@ -1253,18 +1297,19 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
             onPressed: () => Navigator.pop(dialogContext),
             child: const LegacyText('Close'),
           ),
-          FilledButton.icon(
-            key: const ValueKey('copy-starting-peers'),
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: document));
-              if (dialogContext.mounted) {
-                Navigator.pop(dialogContext);
-                _toast('Starting-peer list copied');
-              }
-            },
-            icon: const Icon(Icons.copy_rounded, size: 15),
-            label: const LegacyText('Copy list'),
-          ),
+          if (!config.isEmpty)
+            FilledButton.icon(
+              key: const ValueKey('copy-starting-peers'),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: document));
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                  _toast('Starting-peer list copied');
+                }
+              },
+              icon: const Icon(Icons.copy_rounded, size: 15),
+              label: const LegacyText('Copy list'),
+            ),
         ],
       ),
     );
@@ -1733,7 +1778,10 @@ class _LegacyDiagnosticsState extends State<LegacyDiagnosticsPage>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     LegacyText(
-                      step.$1,
+                      localizedDigits(
+                        step.$1,
+                        fa: LanguageScope.isFarsi(sheetContext),
+                      ),
                       style: const TextStyle(
                         color: tealTextColor,
                         fontWeight: FontWeight.w800,

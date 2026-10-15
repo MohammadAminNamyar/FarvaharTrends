@@ -122,30 +122,55 @@ class NewsTimes extends StatelessWidget {
   String _stamp(dynamic value) => _format.full(value);
   String _clock(dynamic value) => _format.clock(value);
 
-  Widget _compactTime(String label, dynamic value, String key) => Wrap(
-    crossAxisAlignment: WrapCrossAlignment.center,
-    spacing: 7,
-    children: [
-      Text(
-        '$label:',
-        style: const TextStyle(color: _muted, fontSize: 10.5, height: 1.8),
-      ),
-      Tooltip(
-        message: _stamp(value),
-        triggerMode: TooltipTriggerMode.tap,
-        child: Text(
-          _clock(value),
-          key: ValueKey('$key-${news['id']}'),
-          textDirection: TextDirection.ltr,
-          style: const TextStyle(
-            color: _ink,
-            fontSize: 10.5,
-            fontWeight: FontWeight.w600,
-            height: 1.8,
+  Widget _compactTime(String label, dynamic value, String key) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: Icon(
+            key == 'sent-time'
+                ? Icons.send_outlined
+                : Icons.download_done_rounded,
+            color: tealTextColor,
+            size: 20,
           ),
         ),
-      ),
-    ],
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(color: _muted, fontSize: 12)),
+              const SizedBox(height: 4),
+              Tooltip(
+                message: _stamp(value),
+                triggerMode: TooltipTriggerMode.tap,
+                child: Text(
+                  _clock(value),
+                  key: ValueKey('$key-${news['id']}'),
+                  textDirection: TextDirection.ltr,
+                  style: const TextStyle(
+                    color: _ink,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                _format.date(value),
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 12,
+                  height: 1.7,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
   );
 
   @override
@@ -166,6 +191,8 @@ class NewsTimes extends StatelessWidget {
                     news['createdAtMs'],
                     'sent-time',
                   ),
+                  if (!local)
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                   if (!local)
                     _compactTime(
                       fa ? 'دریافت در این گوشی' : 'Received here',

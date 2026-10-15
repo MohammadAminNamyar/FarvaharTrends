@@ -7,6 +7,17 @@ import '../app_controller.dart';
 import '../core/channel_recovery.dart';
 import '../core/snapshot_dto.dart';
 import 'localization.dart';
+import 'create_channel_page.dart';
+
+Future<String?> showRecoveryPassword(
+  BuildContext context, {
+  required bool fa,
+  required bool creating,
+}) => showDialog<String>(
+  context: context,
+  barrierDismissible: false,
+  builder: (_) => _RecoveryPassword(fa: fa, creating: creating),
+);
 
 class ChannelToolsPage extends StatefulWidget {
   const ChannelToolsPage({
@@ -60,11 +71,8 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
     }
   }
 
-  Future<String?> password(bool creating) => showDialog<String>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => _RecoveryPassword(fa: fa, creating: creating),
-  );
+  Future<String?> password(bool creating) =>
+      showRecoveryPassword(context, fa: fa, creating: creating);
   Future<void> backup() => work(() async {
     final secret = await password(true);
     if (secret == null || !mounted) return;
@@ -94,8 +102,80 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
   Future<void> restore() => work(() async {
     final file = await PilotPlatform.openChannelDocument();
     if (file == null || !mounted) return;
+    final ownerKit =
+        (jsonDecode(file) as Map)['kind'] == 'channel-owner-recovery';
+    if (ownerKit) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(t('جایگزینی کلید مالک', 'Replace the owner key')),
+          content: Text(
+            t(
+              'یک کلید انتشار تازه می‌سازیم. پس از دریافت این تغییر، همتاها کلید و دعوت‌نامه‌های قبلی را نمی‌پذیرند و خبرهای قبلی از حافظهٔ فعال کنار می‌روند. نسخه‌های ذخیره‌شدهٔ دیگران حذف نمی‌شوند. فایل بازیابی تازه را هم ذخیره کنید.',
+              'We will create a new publishing key. Peers that receive the change stop accepting old keys and invitations, and old news leaves their active cache. Other people’s saved copies are not erased. Save the updated recovery kit too.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(t('انصراف', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(t('ادامه', 'Continue')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     final secret = await password(false);
     if (secret == null) return;
+    if (ownerKit) {
+      String? token;
+      try {
+        final result = await app.channelAction('prepareOwnerRecovery', {
+          'file': file,
+          'password': secret,
+        });
+        final prepared = jsonDecode(result!) as Map;
+        token = prepared['token'] as String;
+        final saved = await PilotPlatform.saveChannelDocument(
+          prepared['file'] as String,
+          'FarvaharTrends-owner-recovery-${prepared['generation']}.json',
+        );
+        if (!saved) {
+          if (mounted) {
+            setState(
+              () => message = t(
+                'ذخیره لغو شد؛ کلید مالک عوض نشد.',
+                'Saving was cancelled; the owner key was not changed.',
+              ),
+            );
+          }
+          return;
+        }
+        await app.channelAction('commitProtectedChannel', {'token': token});
+        token = null;
+        if (mounted) {
+          setState(
+            () => message = t(
+              'کلید تازه فعال شد. فایل بازیابی را جدا از گوشی نگه دارید. دستگاه‌های آفلاین پس از دریافت تغییر، کلید قبلی را رد می‌کنند؛ برای نویسندگان دعوت‌نامهٔ تازه بسازید.',
+              'The new key is active. Keep the recovery kit separate from this phone. Offline devices reject the old key after receiving the change; invite editors again.',
+            ),
+          );
+        }
+      } finally {
+        if (token != null) {
+          try {
+            await app.channelAction('cancelProtectedChannel', {'token': token});
+          } catch (_) {
+            /* Preparation expires locally. */
+          }
+        }
+      }
+      return;
+    }
     await app.channelAction('restoreChannelRecovery', {
       'file': file,
       'password': secret,
@@ -108,6 +188,46 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
         ),
       );
     }
+  });
+
+  Future<void> migrate(ChannelItem channel) => work(() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          t(
+            'ساخت کانال با کلید بازیابی مستقل',
+            'Create a channel with independent recovery',
+          ),
+        ),
+        content: Text(
+          t(
+            'کانال تازه شناسهٔ جداگانه دارد. کانال قبلی حفظ می‌شود و دنبال‌کنندگان باید کانال تازه را خودشان انتخاب کنند. نام مشابه، تأیید هویت یا انتقال اعتماد نیست.',
+            'The new channel has a separate identity. The old channel is retained and readers choose whether to follow the new one. A matching name does not transfer trust or prove identity.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('انصراف', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('ساخت کانال تازه', 'Create new channel')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (_) => CreateChannelPage(
+          app: app,
+          initialName: channel.name,
+          initialDescription: channel.description,
+        ),
+      ),
+    );
   });
   Future<void> requestEditor() => work(() async {
     final label = await showDialog<String>(
@@ -334,13 +454,31 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
                 const SizedBox(height: 16),
               ],
               if (channel?.owned == true) ...[
+                if (!channel!.recoverable &&
+                    Snapshot.fromJson(app.snapshot).channelKeyManagement)
+                  tile(
+                    Icons.enhanced_encryption_outlined,
+                    t('بازیابی با کلید جداگانه', 'Independent recovery key'),
+                    t(
+                      'نسخهٔ پشتیبان این کانال، کلید سرقت‌شده را لغو نمی‌کند. یک کانال تازه با کلید بازیابی مستقل بسازید.',
+                      'This channel’s backup cannot revoke a stolen owner key. Create a new channel with an independent recovery key.',
+                    ),
+                    () => migrate(channel),
+                  ),
                 tile(
                   Icons.key_rounded,
-                  t('ذخیرهٔ نسخهٔ بازیابی', 'Save recovery file'),
-                  t(
-                    'رمز ذخیره نمی‌شود؛ برای بازیابی هم فایل و هم رمز لازم است.',
-                    'The password is not saved; both file and password are needed for recovery.',
-                  ),
+                  channel.recoverable
+                      ? t('پشتیبان کلید انتشار', 'Back up publishing access')
+                      : t('ذخیرهٔ نسخهٔ بازیابی', 'Save recovery file'),
+                  channel.recoverable
+                      ? t(
+                          'برای تعویض کلید سرقت‌شده، فایل بازیابی مستقلی را باز کنید که هنگام ساخت کانال ذخیره کردید.',
+                          'To replace a stolen publishing key, open the separate recovery kit saved when this channel was created.',
+                        )
+                      : t(
+                          'رمز ذخیره نمی‌شود؛ برای بازیابی هم فایل و هم رمز لازم است.',
+                          'The password is not saved; both file and password are needed for recovery.',
+                        ),
                   backup,
                 ),
                 tile(
@@ -352,7 +490,7 @@ class _ChannelToolsPageState extends State<ChannelToolsPage> with Localized {
                   ),
                   invite,
                 ),
-                for (final editor in channel!.editors)
+                for (final editor in channel.editors)
                   Card(
                     child: ListTile(
                       title: Text(editor['label'] as String),
@@ -586,194 +724,4 @@ class _EditorNameState extends State<_EditorName> {
       ),
     ],
   );
-}
-
-class ReaderSettingsCard extends StatelessWidget with Localized {
-  const ReaderSettingsCard({super.key, required this.app});
-  final AppController app;
-  @override
-  bool get fa => isFarsiLanguage(app.languageCode);
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              t('خبرخوان شما', 'Your reader'),
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-            ),
-            SwitchListTile.adaptive(
-              key: const ValueKey('news-notifications'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(t('اعلان خبرهای تازه', 'News notifications')),
-              subtitle: Text(
-                t(
-                  'فقط کانال‌های دنبال‌شده؛ بدون متن خبر در اعلان',
-                  'Followed channels only; article text stays out of alerts',
-                ),
-              ),
-              value: app.newsNotifications,
-              onChanged: app.busy
-                  ? null
-                  : (value) =>
-                        app.perform(() => app.setNewsNotifications(value)),
-            ),
-            const Divider(),
-            Text(
-              t('دریافت تصویر', 'Image downloads'),
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            DropdownButtonFormField<String>(
-              key: ValueKey('image-mode-${app.imageMode}'),
-              initialValue: app.imageMode,
-              isExpanded: true,
-              items: [
-                DropdownMenuItem(
-                  value: 'wifiOnly',
-                  child: Text(t('فقط وای‌فای', 'Wi-Fi only')),
-                ),
-                DropdownMenuItem(
-                  value: 'any',
-                  child: Text(
-                    t('وای‌فای و اینترنت همراه', 'Wi-Fi and mobile data'),
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: 'never',
-                  child: Text(t('فقط متن', 'Text only')),
-                ),
-              ],
-              onChanged: app.busy
-                  ? null
-                  : (value) {
-                      if (value != null) {
-                        app.perform(() => app.setImageMode(value));
-                      }
-                    },
-            ),
-            const SizedBox(height: 10),
-            Text(
-              t(
-                'این انتخاب برای تصویرهای دریافتی است. تصویری که به خبر خود پیوست می‌کنید، می‌تواند از اینترنت همراه هم فرستاده شود. تصویرها حداکثر ۹۶ کیلوبایت هستند و از بلوتوث فرستاده نمی‌شوند.',
-                'This controls received images. A photo you attach to your own news can also be sent over mobile data. Images are limited to 96 KB and do not travel over Bluetooth.',
-              ),
-              style: const TextStyle(fontSize: 11, height: 1.7),
-            ),
-            const Divider(height: 28),
-            SwitchListTile.adaptive(
-              key: const ValueKey('restart-after-reboot'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                t(
-                  'ادامهٔ دریافت پس از راه‌اندازی مجدد',
-                  'Keep receiving after reboot',
-                ),
-              ),
-              subtitle: Text(
-                t(
-                  'برنامه تلاش می‌کند سرویس دریافت با اعلان قابل مشاهده را پس از راه‌اندازی مجدد گوشی یا بسته شدن توسط سیستم دوباره فعال کند.',
-                  'The app tries to restart its visible receiving service after a phone reboot or an OS kill.',
-                ),
-              ),
-              value: app.restartAfterReboot,
-              onChanged: app.busy
-                  ? null
-                  : (value) =>
-                        app.perform(() => app.setRestartAfterReboot(value)),
-            ),
-            Text(
-              t(
-                'توقف دستی در برنامه این راه‌اندازی را تا شروع بعدی خاموش می‌کند. توقف اجباری و مدیریت باتری سازنده همچنان سرویس را پایان می‌دهند. این گزینه آنچه به اشتراک می‌گذارید را تغییر نمی‌دهد.',
-                'Pressing Stop in the app disarms this until the next start. Force-stop and manufacturer battery killers still end the service. This does not change what is shared.',
-              ),
-              key: const ValueKey('restart-after-reboot-explanation'),
-              style: const TextStyle(fontSize: 11, height: 1.7),
-            ),
-            const Divider(height: 28),
-            SwitchListTile.adaptive(
-              key: const ValueKey('internet-announce'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                t(
-                  'اعلام حضور در شبکهٔ اینترنتی',
-                  'Announce on the Internet network',
-                ),
-              ),
-              subtitle: Text(
-                t(
-                  'روشن: گوشی‌های دیگر می‌توانند این دستگاه را از راه اینترنت پیدا کنند. خاموش: فقط خودتان به دیگران وصل می‌شوید.',
-                  'On: other phones can find this device over the Internet. Off: only you connect out to others.',
-                ),
-              ),
-              value: app.internetAnnounce,
-              onChanged: app.busy
-                  ? null
-                  : (value) =>
-                        app.perform(() => app.setInternetAnnounce(value)),
-            ),
-            Text(
-              t(
-                'با خاموش کردن، اعلام حضور متوقف و کشف اینترنتی دوباره راه‌اندازی می‌شود. دریافت از دستگاه‌های نزدیک ادامه دارد. همتاهای متصل همچنان نشانی شما را می‌بینند.',
-                'Turning this off stops announcing this device and restarts Internet discovery. Nearby receiving continues. Connected peers still see your address.',
-              ),
-              key: const ValueKey('internet-announce-explanation'),
-              style: const TextStyle(fontSize: 11, height: 1.7),
-            ),
-            const Divider(height: 28),
-            SwitchListTile.adaptive(
-              key: const ValueKey('public-discovery'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                t(
-                  'استفاده از سرویس‌های کشف عمومی',
-                  'Use public discovery services',
-                ),
-              ),
-              subtitle: Text(
-                t(
-                  'خاموش: کشف با همتاهای ذخیره‌شده و معرفی‌شده ادامه می‌یابد. این گزینه مسیرها را به داخل یک کشور محدود نمی‌کند.',
-                  'Off: use saved and shared peers. This does not restrict connections to one country.',
-                ),
-              ),
-              value: app.publicDiscovery,
-              onChanged: app.busy
-                  ? null
-                  : (value) => app.perform(() => app.setPublicDiscovery(value)),
-            ),
-            SwitchListTile.adaptive(
-              key: const ValueKey('discovery-helper'),
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                t('کمک به اتصال دوبارهٔ دیگران', 'Help other phones reconnect'),
-              ),
-              subtitle: Text(
-                t(
-                  'با روشن بودن اعلام حضور و در صورت دسترس‌پذیری، این گوشی به کشف همتاها کمک می‌کند و نشانی اتصال آن به اشتراک گذاشته می‌شود. دریافت و انتقال خبر به این گزینه وابسته نیست.',
-                  'When announcing and reachable, this phone helps discovery and shares its connection address. Receiving and forwarding news also work with this off.',
-                ),
-              ),
-              value: app.discoveryHelper,
-              onChanged: app.busy
-                  ? null
-                  : (value) => app.perform(() => app.setDiscoveryHelper(value)),
-            ),
-            const Divider(height: 28),
-            Text(
-              app.appVersion == 'development'
-                  ? t('نسخهٔ توسعه', 'Development build')
-                  : '${t('نسخهٔ برنامه', 'App version')} ${app.appVersion}',
-              key: const ValueKey('reader-app-version'),
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

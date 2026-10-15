@@ -13,6 +13,7 @@ import 'localization.dart';
 import 'reader_widgets.dart';
 import 'shared_widgets.dart';
 import 'theme.dart';
+import 'unread_badge.dart';
 
 /// Builds the Channels tab's list items. List state (search text, the
 /// Following/Discover switch, pending trust saves) stays on the shell so it
@@ -23,6 +24,8 @@ class ChannelsView with Localized {
     required this.snapshot,
     required this.fa,
     required this.discoverChannels,
+    this.unreadOnly = false,
+    this.onUnreadChanged,
     required this.channelSearch,
     required this.trustPendingChannelId,
     required this.trustErrorChannelId,
@@ -41,6 +44,8 @@ class ChannelsView with Localized {
   @override
   final bool fa;
   final bool discoverChannels;
+  final bool unreadOnly;
+  final ValueChanged<bool>? onUnreadChanged;
   final TextEditingController channelSearch;
   final String? trustPendingChannelId, trustErrorChannelId;
   final VoidCallback onSearchChanged, onCreateChannel, onManageBlocked;
@@ -59,16 +64,19 @@ class ChannelsView with Localized {
       latest.putIfAbsent(id, () => bulletin);
     }
     final source = discoverChannels
-        ? available
+        ? available.where((c) => !app.isChannelFollowed(c.id)).toList()
         : followedChannels(app, snapshot);
     final query = normalizeSearchText(channelSearch.text);
     final visible =
         source
             .where(
               (c) =>
-                  query.isEmpty ||
-                  normalizeSearchText('${c.name} ${c.id} ${c.ownerId}')
-                      .contains(query),
+                  (!unreadOnly ||
+                      discoverChannels ||
+                      app.unreadFor(c.id) > 0) &&
+                  (query.isEmpty ||
+                      normalizeSearchText('${c.name} ${c.id} ${c.ownerId}')
+                          .contains(query)),
             )
             .toList()
           ..sort((a, b) {
@@ -95,6 +103,14 @@ class ChannelsView with Localized {
                 ),
               ),
             ),
+            IconButton(
+              key: const ValueKey('channel-tools'),
+              tooltip: t('بازیابی و همکاری', 'Recovery & collaboration'),
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(builder: (_) => ChannelToolsPage(app: app)),
+              ),
+              icon: const Icon(Icons.key_outlined, size: 21),
+            ),
             FilledButton.icon(
               key: const ValueKey('create-channel'),
               style: FilledButton.styleFrom(
@@ -116,17 +132,6 @@ class ChannelsView with Localized {
         ),
       ),
       const SizedBox(height: 8),
-      Align(
-        alignment: AlignmentDirectional.centerEnd,
-        child: TextButton.icon(
-          key: const ValueKey('channel-tools'),
-          onPressed: () => Navigator.of(context).push<void>(
-            MaterialPageRoute(builder: (_) => ChannelToolsPage(app: app)),
-          ),
-          icon: const Icon(Icons.key_rounded, size: 17),
-          label: Text(t('بازیابی و همکاری', 'Recovery & collaboration')),
-        ),
-      ),
       TextField(
         key: const ValueKey('channel-search'),
         controller: channelSearch,
@@ -153,11 +158,11 @@ class ChannelsView with Localized {
         ),
       ),
       const SizedBox(height: 12),
-      SegmentedButton<bool>(
+      SegmentedButton<String>(
         key: const ValueKey('channel-sections'),
         showSelectedIcon: false,
         style: SegmentedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           textStyle: TextStyle(
             fontFamily: fa ? 'Vazirmatn' : 'Manrope',
             fontFamilyFallback: const ['Vazirmatn', 'Manrope'],
@@ -167,16 +172,33 @@ class ChannelsView with Localized {
         ),
         segments: [
           ButtonSegment(
-            value: false,
+            value: 'following',
             label: Text(t('دنبال‌شده‌ها', 'Following')),
           ),
+          if (onUnreadChanged != null)
+            ButtonSegment(
+              value: 'unread',
+              label: Text(
+                t('خوانده‌نشده', 'Unread'),
+                key: const ValueKey('unread-channels-filter'),
+              ),
+            ),
           ButtonSegment(
-            value: true,
+            value: 'discover',
             label: Text(t('کشف کانال‌ها', 'Discover')),
           ),
         ],
-        selected: {discoverChannels},
-        onSelectionChanged: (value) => onDiscoverChanged(value.first),
+        selected: {
+          discoverChannels
+              ? 'discover'
+              : unreadOnly && onUnreadChanged != null
+              ? 'unread'
+              : 'following',
+        },
+        onSelectionChanged: (value) {
+          onUnreadChanged?.call(value.first == 'unread');
+          onDiscoverChanged(value.first == 'discover');
+        },
       ),
       if (app.blockedChannelIds.isNotEmpty)
         Align(
@@ -194,18 +216,28 @@ class ChannelsView with Localized {
           Icons.campaign_outlined,
           query.isNotEmpty
               ? t('کانالی پیدا نشد', 'No matching channels')
+              : unreadOnly && !discoverChannels
+              ? t('همهٔ خبرها را خوانده‌اید', 'You’re all caught up')
               : discoverChannels
-              ? t('هنوز کانالی پیدا نشده', 'No channels discovered yet')
+              ? t(
+                  'کانال تازه‌ای برای دنبال‌کردن نیست',
+                  'No new channels to follow',
+                )
               : t('خبرخوانتان را انتخاب کنید', 'Make this feed yours'),
           query.isNotEmpty
               ? t(
                   'نام یا شناسهٔ دیگری را امتحان کنید.',
                   'Try another name or ID.',
                 )
+              : unreadOnly && !discoverChannels
+              ? t(
+                  'برای دیدن همهٔ کانال‌های خود، دنبال‌شده‌ها را انتخاب کنید.',
+                  'Choose Following to see all your channels.',
+                )
               : discoverChannels
               ? t(
-                  'کانال‌ها پس از اتصال به همتاها ظاهر می‌شوند. می‌توانید کانال خودتان را بسازید.',
-                  'Channels appear when peers connect. You can also create your own.',
+                  'کانال‌های دنبال‌شده در بخش دنبال‌شده‌ها هستند. کانال‌های تازه پس از اتصال به همتاها اینجا ظاهر می‌شوند.',
+                  'Your followed channels are in Following. New channels appear here when peers connect.',
                 )
               : t(
                   'از بخش کشف، کانال دلخواهتان را دنبال کنید. کانال‌های خودتان خودکار دنبال می‌شوند.',
@@ -272,13 +304,62 @@ class ChannelsView with Localized {
                             ),
                           ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            preview.replaceAll(RegExp(r'\s+'), ' '),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: app.unreadFor(id) > 0
+                                  ? inkColor
+                                  : mutedColor,
+                              fontWeight: app.unreadFor(id) > 0
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              fontSize: 12,
+                              height: 1.6,
+                            ),
+                          ),
+                        ),
                         if (app.unreadFor(id) > 0) ...[
-                          const SizedBox(width: 6),
-                          Badge(
+                          const SizedBox(width: 10),
+                          UnreadBadge(
                             key: ValueKey('unread-$id'),
-                            label: Text(n(app.unreadFor(id))),
+                            count: app.unreadFor(id),
+                            fa: fa,
+                            muted: app.isChannelMuted(id),
                           ),
                         ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Tooltip(
+                            message: t(
+                              'انتخاب خصوصی شماست؛ تأیید درستی خبر نیست.',
+                              'Your private choice; not proof that news is true.',
+                            ),
+                            child: Text(
+                              channelAssessment(app, snapshot, id, fa: fa),
+                              key: ValueKey('channel-trust-$id'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: owned || trusted
+                                    ? tealTextColor
+                                    : mutedColor,
+                              ),
+                            ),
+                          ),
+                        ),
                         if (latest != null) ...[
                           const SizedBox(width: 6),
                           Text(
@@ -294,30 +375,6 @@ class ChannelsView with Localized {
                           ),
                         ],
                       ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      preview.replaceAll(RegExp(r'\s+'), ' '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: mutedColor, fontSize: 12),
-                    ),
-                    const SizedBox(height: 4),
-                    Tooltip(
-                      message: t(
-                        'انتخاب خصوصی شماست؛ تأیید درستی خبر نیست.',
-                        'Your private choice; not proof that news is true.',
-                      ),
-                      child: Text(
-                        channelAssessment(app, snapshot, id, fa: fa),
-                        key: ValueKey('channel-trust-$id'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: owned || trusted ? tealTextColor : mutedColor,
-                        ),
-                      ),
                     ),
                     if (trustPendingChannelId == id)
                       Padding(
@@ -366,18 +423,7 @@ class ChannelsView with Localized {
                   ],
                 ),
               ),
-              if (owned || channel.canPublish)
-                IconButton(
-                  key: ValueKey('channel-compose-$id'),
-                  tooltip: t('نوشتن خبر', 'Write news'),
-                  onPressed: app.busy ? null : () => onPublish(channel),
-                  icon: const Icon(
-                    Icons.edit_note_rounded,
-                    color: tealTextColor,
-                    size: 22,
-                  ),
-                )
-              else
+              if (!owned && !channel.canPublish && discoverChannels)
                 IconButton(
                   key: ValueKey('follow-$id'),
                   tooltip: followed
@@ -399,6 +445,9 @@ class ChannelsView with Localized {
                   ),
                 ),
               ChannelOptions(
+                onPublish: owned || channel.canPublish
+                    ? () => onPublish(channel)
+                    : null,
                 channel: channel.raw,
                 fa: fa,
                 trusted: trusted,
@@ -458,11 +507,21 @@ Future<void> showChannelIdentity(
             ),
           ),
           const SizedBox(height: 18),
-          Text(tr(fa, 'اثر انگشت کامل ناشر', 'Full publisher fingerprint')),
+          Text(
+            channel.recoverable
+                ? tr(
+                    fa,
+                    'اثر انگشت کلید بازیابی کانال',
+                    'Channel recovery-key fingerprint',
+                  )
+                : tr(fa, 'اثر انگشت کامل ناشر', 'Full publisher fingerprint'),
+          ),
           const SizedBox(height: 6),
           Directionality(
             textDirection: TextDirection.ltr,
-            child: Fingerprint(channel.ownerId),
+            child: Fingerprint(
+              channel.recoverable ? channel.recoveryId : channel.ownerId,
+            ),
           ),
           const SizedBox(height: 16),
           Text(tr(fa, 'شناسهٔ کامل کانال', 'Full channel ID')),

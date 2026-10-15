@@ -141,6 +141,15 @@ class ChannelKeyStore {
       }
     }
     if (entry['role'] == 'owner') {
+      if (channel.recoverable) {
+        if (authorization?.kind != 'owner' ||
+            authorization?.ownerId != identity.id) {
+          throw const FormatException(
+            'Recovery-authorized owner key is required.',
+          );
+        }
+        return;
+      }
       if (authorization != null &&
           (authorization.kind != 'manager' ||
               authorization.managerId != identity.id)) {
@@ -169,6 +178,28 @@ class ChannelKeyStore {
       throw StateError('Channel key storage is full.');
     }
     final existing = entries[id];
+    if (existing != null) {
+      final channel = SignedChannel.fromJson(
+        Map<String, dynamic>.from(entry['channel'] as Map),
+      );
+      if (channel.recoverable) {
+        final before = ChannelControl.parse(
+          Map<String, dynamic>.from(existing['authorization'] as Map),
+          channel,
+        );
+        final after = ChannelControl.parse(
+          Map<String, dynamic>.from(entry['authorization'] as Map),
+          channel,
+        );
+        if (after.generation < before.generation ||
+            (after.generation == before.generation &&
+                after.ownerGrant?.id != before.ownerGrant?.id)) {
+          throw StateError(
+            'An older or conflicting backup cannot replace the current channel key.',
+          );
+        }
+      }
+    }
     if (existing?['role'] == 'owner' && entry['role'] != 'owner') {
       throw StateError(
         'An editor invitation cannot replace channel ownership.',

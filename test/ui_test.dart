@@ -85,6 +85,16 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> checkNewsDetail(WidgetTester tester, String text) async {
+    final details = find.byTooltip('News details').first;
+    await tester.ensureVisible(details);
+    await tester.tap(details);
+    await tester.pumpAndSettle();
+    expect(find.text(text), findsOneWidget);
+    await tester.tap(find.byTooltip('Close').last);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('Farsi timeout copy never exposes an English exception', (
     tester,
   ) async {
@@ -104,8 +114,12 @@ void main() {
 
   testWidgets('reader settings show the current build version', (tester) async {
     final app = await showApp(tester, language: 'fa');
+    expect(find.byKey(const ValueKey('news-notifications')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('reader-settings')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-page')), findsOneWidget);
+    expect(find.text('تنظیمات'), findsOneWidget);
+    expect(find.text('خبرخوان شما'), findsNothing);
     final version = find.byKey(const ValueKey('reader-app-version'));
     expect(version, findsOneWidget);
     final label = tester.widget<Text>(version).data!;
@@ -255,6 +269,33 @@ void main() {
   });
 
   for (final language in ['fa', 'en']) {
+    testWidgets(
+      '$language settings page groups preferences and fits large text',
+      (tester) async {
+        await showApp(
+          tester,
+          language: language,
+          size: const Size(360, 800),
+          scale: 1.4,
+        );
+        await tester.tap(find.byKey(const ValueKey('reader-settings')));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(language == 'fa' ? 'تنظیمات' : 'Settings'),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('news-notifications')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await capture(tester, 'ui-settings-$language', wholeApp: true);
+        await tester.tap(find.byType(BackButton));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('settings-page')), findsNothing);
+        expect(find.byKey(const ValueKey('discovery-card')), findsOneWidget);
+      },
+    );
     testWidgets('$language connection counts exclude remembered peers', (
       tester,
     ) async {
@@ -429,6 +470,9 @@ void main() {
         ('Public notices', 'Useful public updates'),
       ]);
       expect(find.text('Your channel'), findsOneWidget);
+      await reveal(tester, find.byKey(ValueKey('channel-menu-$_ownedId')));
+      await tester.tap(find.byKey(ValueKey('channel-menu-$_ownedId')));
+      await tester.pumpAndSettle();
       final publish = find.byKey(ValueKey('channel-compose-$_ownedId'));
       await reveal(tester, publish);
       await tester.tap(publish);
@@ -449,10 +493,7 @@ void main() {
       expect(app.running, isFalse);
       await tab(tester, 'News');
       expect(find.text('This is a public test update.'), findsOneWidget);
-      expect(
-        find.text('Valid digital signature · public news'),
-        findsOneWidget,
-      );
+      await checkNewsDetail(tester, 'Valid digital signature');
       expect(tester.takeException(), isNull);
     },
   );
@@ -534,6 +575,97 @@ void main() {
     },
   );
 
+  for (final language in ['fa', 'en']) {
+    testWidgets('$language diagnostics and guide use the selected language', (
+      tester,
+    ) async {
+      final fa = language == 'fa';
+      await showApp(tester, language: language);
+      await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
+      await tester.pumpAndSettle();
+      final receiving = find.textContaining(
+        fa ? 'اتصال به یک همتای مورد اعتماد' : 'Stay connected to a reachable',
+      );
+      await reveal(tester, receiving);
+      expect(receiving, findsOneWidget);
+      await reveal(tester, find.text(fa ? 'همتاهای متصل' : 'CONNECTED PEERS'));
+      expect(find.text(fa ? '۰' : '0'), findsWidgets);
+      expect(find.text(fa ? '0' : '۰'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('pilot-guide')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          fa
+              ? 'با یک آزمایش کوچک شروع کنید.\nنتیجهٔ اتصال را بسنجید.'
+              : 'Start small.\nLearn from the signal.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text(fa ? '۰۱' : '01'), findsOneWidget);
+      final titles = fa
+          ? [
+              'گوشی‌های آزمایش را انتخاب کنید',
+              'اعتماد دستی را در هر دو دستگاه ثبت کنید',
+              'اتصال را با صفحه‌های روشن بررسی کنید',
+              'گوشی را قفل و از شارژ جدا کنید',
+              'از گوشی فرستنده یک پیام تازه بفرستید',
+              'رسید دریافت چه چیزی را ثابت می‌کند؟',
+            ]
+          : [
+              'Choose your phones',
+              'Pair in both directions',
+              'Establish a foreground route',
+              'Lock, unplug, and wait',
+              'Send a fresh source message',
+              'A receipt is evidence with a boundary.',
+            ];
+      for (final title in titles) {
+        await tester.ensureVisible(find.text(title));
+        await tester.pumpAndSettle();
+        expect(find.text(title), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final language in ['fa', 'en']) {
+    testWidgets('$language test-message metadata starts collapsed', (
+      tester,
+    ) async {
+      final fa = language == 'fa';
+      final app = await showApp(tester, language: language);
+      app.update({
+        'bulletins': [
+          {
+            ..._newsItem(_otherId, 'Diagnostic article'),
+            'runId': 'sample-run',
+            'sequence': 7,
+          },
+        ],
+      });
+      await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
+      await tester.pumpAndSettle();
+      await tab(tester, fa ? 'پیام آزمایش' : 'Bulletins');
+      final details = find.text(fa ? 'جزئیات آزمایش' : 'Test details');
+      await reveal(tester, details);
+      expect(find.text('sample-run'), findsNothing);
+      expect(find.textContaining('Source '), findsNothing);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(find.text('sample-run'), findsOneWidget);
+      expect(
+        find.text(fa ? 'شمارهٔ پیام' : 'Message sequence'),
+        findsOneWidget,
+      );
+      expect(find.text(fa ? '۷' : '7'), findsOneWidget);
+      expect(
+        find.text(fa ? 'شناسهٔ کوتاه کلید فرستنده' : 'Short signing-key ID'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('Reader navigation includes Temporary log without Results', (
     tester,
   ) async {
@@ -574,16 +706,25 @@ void main() {
     await tester.tap(follow);
     await tester.pumpAndSettle();
     expect(app.isChannelFollowed(_otherId), isTrue);
+    expect(find.byKey(ValueKey('channel-card-$_otherId')), findsNothing);
     await tab(tester, 'News');
     await reveal(tester, find.text('Community update'));
     expect(find.text('Community update'), findsOneWidget);
     expect(find.text('Weather update'), findsNothing);
     expect(find.text('Legacy pilot message'), findsNothing);
-    expect(find.text('Received via local Wi-Fi'), findsOneWidget);
+    await checkNewsDetail(tester, 'Received via local Wi-Fi');
     await tab(tester, 'Channels');
-    await reveal(tester, follow);
-    await tester.tap(follow);
+    await tester.tap(find.text('Following'));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('open-channel-$_otherId')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unfollow'));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Discover'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('channel-card-$_otherId')), findsOneWidget);
     await tab(tester, 'News');
     expect(find.text('Community update'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -857,17 +998,16 @@ void main() {
       await tester.pumpAndSettle();
       await reveal(tester, find.text('Community update'));
       expect(find.text('Trusted by you'), findsOneWidget);
-      expect(
-        find.text('Valid digital signature · public news'),
-        findsOneWidget,
-      );
+      await checkNewsDetail(tester, 'Valid digital signature');
       await tab(tester, 'Channels');
-      final follow = find.byKey(ValueKey('follow-$_otherId'));
-      await reveal(tester, follow);
-      await tester.tap(follow);
+      await tester.tap(find.byKey(ValueKey('open-channel-$_otherId')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('channel-follow-$_otherId')));
       await tester.pumpAndSettle();
       expect(app.isChannelFollowed(_otherId), isFalse);
       expect(app.isChannelTrusted(_otherId), isTrue);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
       expect(app.newsPublications, isEmpty);
       expect(app.channelCreations, isEmpty);
       await app.blockChannel(_otherId);
@@ -878,10 +1018,7 @@ void main() {
       await tab(tester, 'News');
       await reveal(tester, find.text('Community update'));
       expect(find.text('Not assessed'), findsOneWidget);
-      expect(
-        find.text('Valid digital signature · public news'),
-        findsOneWidget,
-      );
+      await checkNewsDetail(tester, 'Valid digital signature');
       expect(tester.takeException(), isNull);
     },
   );
@@ -946,6 +1083,9 @@ void main() {
     });
     await app.blockChannel(_ownedId);
     await tab(tester, 'Channels');
+    await reveal(tester, find.byKey(ValueKey('channel-menu-$_secondOwnedId')));
+    await tester.tap(find.byKey(ValueKey('channel-menu-$_secondOwnedId')));
+    await tester.pumpAndSettle();
     final write = find.byKey(ValueKey('channel-compose-$_secondOwnedId'));
     await reveal(tester, write);
     await tester.tap(write);
@@ -1103,6 +1243,15 @@ void main() {
       await tester.tap(find.byKey(ValueKey('open-channel-$_otherId')));
       await tester.pumpAndSettle();
       expect(find.byKey(ValueKey('channel-page-$_otherId')), findsOneWidget);
+      // The timeline names its channel once, in the page header.
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key as ValueKey<String>).value.startsWith('news-header-'),
+        ),
+        findsNothing,
+      );
       expect(find.text('Community bulletin'), findsOneWidget);
       expect(find.text('Weather bulletin'), findsNothing);
       expect(app.isChannelFollowed(_otherId), isFalse);
@@ -1126,6 +1275,19 @@ void main() {
     tester,
   ) async {
     final app = await showApp(tester);
+    await tester.tap(find.byKey(const ValueKey('reader-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('writer-nickname-setting')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-writer-nickname')),
+      'روزبه',
+    );
+    await tester.tap(find.byKey(const ValueKey('save-writer-nickname')));
+    await tester.pumpAndSettle();
+    expect(app.writerNickname, 'روزبه');
+    await tester.pageBack();
+    await tester.pumpAndSettle();
     app.update({
       'channels': [
         {
@@ -1142,17 +1304,20 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('channel-compose-news')));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('writer-nickname')), findsNothing);
     await tester.enterText(
       find.byKey(const ValueKey('news-text')),
       'Fresh channel bulletin',
     );
     await tester.tap(find.byKey(const ValueKey('submit-news')));
     await tester.pumpAndSettle();
+    expect(find.text('By روزبه'), findsOneWidget);
     await tester.tap(find.text('Sign & publish'));
     await tester.pumpAndSettle();
     expect(find.byKey(ValueKey('channel-page-$_ownedId')), findsOneWidget);
     expect(find.text('Fresh channel bulletin'), findsOneWidget);
     expect(app.newsPublications, [(_ownedId, 'Fresh channel bulletin')]);
+    expect(app.nicknameUpdates, [(_ownedId, 'روزبه')]);
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('channel-search')), findsOneWidget);
@@ -1205,6 +1370,88 @@ void main() {
   );
 
   for (final language in ['fa', 'en']) {
+    testWidgets(
+      '$language crowded channel list filters local unread news without following sources',
+      (tester) async {
+        final app = await showApp(
+          tester,
+          language: language,
+          size: const Size(360, 800),
+          scale: 1.6,
+        );
+        final fa = language == 'fa';
+        final ids = List.generate(
+          20,
+          (i) => i.toRadixString(16).padLeft(64, 'b'),
+        );
+        app.update({
+          'channels': [
+            for (var i = 0; i < ids.length; i++)
+              _foreignChannel(
+                ids[i],
+                fa
+                    ? 'خبرهای فرهنگی و اجتماعی شهر و محله ${i + 1}'
+                    : 'Community and neighbourhood notices ${i + 1}',
+              ),
+          ],
+          'bulletins': [
+            for (final id in ids)
+              _newsItem(
+                id,
+                fa
+                    ? 'یک خبر تازه برای آزمایش خوانایی پیش‌نمایش خبر و جایگاه شمارنده'
+                    : 'A fresh public update to check preview readability and unread counts',
+              ),
+          ],
+        });
+        for (final id in ids.take(19)) {
+          await app.followChannel(id);
+        }
+        app.unread[ids[0]] = 125;
+        app.unread[ids[1]] = 3;
+        await tab(tester, fa ? 'کانال‌ها' : 'Channels');
+        final semantics = tester.ensureSemantics();
+        await tester.pump();
+        expect(find.byKey(ValueKey('unread-${ids[0]}')), findsOneWidget);
+        expect(find.text(fa ? '۹۹+' : '99+'), findsWidgets);
+        expect(
+          find.bySemanticsLabel(
+            RegExp(
+              fa
+                  ? '۱۲۵ خبر خوانده‌نشده در این گوشی'
+                  : '125 unread news on this phone',
+            ),
+          ),
+          findsWidgets,
+        );
+        semantics.dispose();
+        await capture(tester, 'ui-unread-large-$language', wholeApp: true);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('channel-sections')),
+            matching: find.byKey(const ValueKey('unread-channels-filter')),
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('unread-channels-filter')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(ValueKey('channel-card-${ids[2]}')), findsNothing);
+        expect(app.isChannelFollowed(ids.last), isFalse);
+        app.unread.clear();
+        app.notifyListeners();
+        await tester.pumpAndSettle();
+        expect(
+          find.text(fa ? 'همهٔ خبرها را خوانده‌اید' : 'You’re all caught up'),
+          findsOneWidget,
+        );
+        await tester.tap(find.text(fa ? 'دنبال‌شده‌ها' : 'Following'));
+        await tester.pumpAndSettle();
+        await reveal(tester, find.byKey(ValueKey('channel-card-${ids[2]}')));
+        expect(find.byKey(ValueKey('channel-card-${ids[2]}')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('$language channel list and news fit larger text', (
       tester,
     ) async {
@@ -1276,7 +1523,7 @@ void main() {
         ],
       });
       await tester.pumpAndSettle();
-      final sections = tester.widget<SegmentedButton<bool>>(
+      final sections = tester.widget<SegmentedButton<String>>(
         find.byKey(const ValueKey('channel-sections')),
       );
       expect(
@@ -1418,6 +1665,32 @@ Map<String, dynamic> _newsItem(String channelId, String text) => {
 
 /// Exercises presentation only: native services and discovery are engine tests.
 class _PreviewController extends AppController {
+  final nicknameUpdates = <(String, String)>[];
+
+  @override
+  Future<void> setWriterNickname(String value) async {
+    writerNickname = value.trim();
+    notifyListeners();
+  }
+
+  @override
+  Future<String?> channelAction(
+    String action,
+    Map<String, dynamic> args,
+  ) async {
+    if (action != 'setWriterNickname') return super.channelAction(action, args);
+    final id = args['channelId'] as String;
+    final nickname = args['nickname'] as String;
+    nicknameUpdates.add((id, nickname));
+    for (final channel in snapshot['channels'] as List) {
+      if (channel['id'] == id) channel['writerNickname'] = nickname;
+    }
+    return null;
+  }
+
+  final unread = <String, int>{};
+  @override
+  int unreadFor(String id) => isChannelFollowed(id) ? unread[id] ?? 0 : 0;
   final channelCreations = <(String, String)>[];
   final newsPublications = <(String, String)>[];
   final _followed = <String>{};

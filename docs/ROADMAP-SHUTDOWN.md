@@ -1,6 +1,6 @@
 # Shutdown resilience and security status
 
-Updated for 0.8.8. This is an implementation status, not an independent security audit or evidence of nationwide delivery. See SHUTDOWN-DISCOVERY-TESTS.md for the earlier isolated-network experiments and READINESS-PLAN.md for all six active workstreams.
+Updated for 0.8.9. This is an implementation status, not an independent security audit or evidence of nationwide delivery. See SHUTDOWN-DISCOVERY-TESTS.md for the earlier isolated-network experiments and READINESS-PLAN.md for all six active workstreams.
 
 ## Finding peers without international infrastructure
 
@@ -36,7 +36,7 @@ Still needed: separate-app attacks against native loopback proxies on real phone
 
 ## Publisher compromise and cryptography
 
-Editors can be revoked by the owner and their later posts rejected. Encrypted backups recover keys; they do not publicly revoke a stolen owner key. There is no precommitted offline authority that can override a compromised channel owner. A successor statement signed only by the stolen key would also authorize an attacker's replacement, so it is not a complete fix.
+Editors can be revoked by the owner and their later posts rejected. Legacy encrypted backups recover the same authority and cannot revoke a stolen legacy owner key. New 0.8.9 protected channels precommit a separate recovery key and export it only in an encrypted kit. Recovery authorizes a new online owner generation; readers enforce it after receiving the signed proof. Policies and editor permissions sign the exact generation-grant ID. Same-generation conflicts fail closed until a higher recovery grant arrives. Existing v1 channels keep their identity and can explicitly create a new protected channel. This experimental protocol needs independent review; see [owner recovery](CHANNEL-OWNER-RECOVERY.md) for offline freshness, storage and compatibility limits.
 
 Application signatures currently use RSA PKCS#1 v1.5 with SHA-256. The installed Dart RSA engine uses CRT private operations without explicit blinding. This warrants specialist side-channel review; it is not evidence of an observed forgery. Changing algorithms or introducing offline recovery requires a versioned protocol, a reviewed key hierarchy, migration of existing channels, and downgrade/replay tests. Do not silently replace keys or invalidate users' channels as a hardening shortcut.
 

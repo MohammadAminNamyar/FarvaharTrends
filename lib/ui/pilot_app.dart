@@ -71,6 +71,8 @@ class _AppState extends State<FarvaharTrendsApp> {
           tertiary: goldTextColor,
           primaryContainer: const Color(0xFFE2F0EE),
           onPrimaryContainer: inkColor,
+          secondaryContainer: const Color(0xFFE2F0EE),
+          onSecondaryContainer: tealTextColor,
           surface: Colors.white,
           error: errorColor,
         ),
