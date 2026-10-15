@@ -64,8 +64,30 @@ news within the shared cache; other public news keeps relay space subject to
 the local outbox's existing priority. Follow choices are not added to envelopes
 or journal records. This changes retention, not traffic-analysis guarantees.
 
-Still required: sustained signed spam and peer-identity churn with honest
-traffic continuing; recovery after resource exhaustion; real low-space/crash
+The repeated-spam regression uses actual loopback TLS, signed Persian news,
+four concurrent flooding connections and fresh transport keys in each of three
+rounds. A separate legitimate publisher and receiving socket stay connected;
+the relay locally follows that publisher's channel to exercise retention priority.
+Paced batches force accepted cache pressure before bursts exercise queue limits;
+the assertions require delivery during every flood, catch-up of all legitimate
+posts, bounded cache/journal sizes and durable news plus new delivery after a
+clean restart. Set `FT_SPAM_WINDOW_SECONDS=60` when running
+`test/sustained_spam_delivery_test.dart` to use the production traffic window;
+the default shortens it to three seconds. `FT_SPAM_WINDOWS` controls 3–10 rounds.
+These are repeated bursts with recovery intervals, not continuous traffic for
+the entire run. The fixture manually pins participants; it does not validate
+automatic admission or resistance to an adversary creating many identities.
+
+On 14 October 2026 the one-minute-window run passed in 5 minutes 49 seconds:
+1,320 signed spam frames were written to the test sockets across 12 transport
+identities, all 18 legitimate posts reached the receiving socket after any
+needed reconciliation, and a fresh post arrived after restart. The cache stayed
+at or below 256 items with 255 evictions, and the reopened journal was 380,293
+bytes. Socket writes are not counts of accepted or forwarded spam. These host
+results do not establish phone throughput, battery cost or nationwide capacity.
+
+Still required: long-duration continuous signed spam and identity churn with
+honest traffic continuing; recovery after resource exhaustion; real low-space/crash
 tests; low-end Android CPU/memory/flash/radio measurements. The single global
 discovery topic and bounded all-channel gossip need a scalable routing design
 and benchmarks before mass rollout. Sharding must retain small-network and
@@ -129,3 +151,11 @@ delivery route and signature information in separate sections.
 Version 0.8.11 stores an optional public writer nickname in Settings and reuses
 it for new posts across channels. Restart, validation, failed saves and composer
 review have regression checks. Advanced test-message metadata starts collapsed.
+
+The 14 October follow-up adds the signed-spam regression without changing app
+code or the 0.8.11 APK. Static analysis passed and the complete Flutter suite
+passed all 533 tests with two concurrent test workers. The first full run had
+one timeout in the existing UDP discovery test; its six-test file passed in
+isolation and the subsequent full run passed. This intermittent failure remains
+recorded rather than being counted as a clean first run. Overlay/native code
+was unchanged from the previously verified build.

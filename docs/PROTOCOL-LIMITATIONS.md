@@ -96,7 +96,7 @@ Publisher and connection keys are separate. Upgrades retain the historical publi
 
 ### Research direction: protecting the first publisher
 
-Investigated 11 October 2026. A credible next architecture separates **anonymous encrypted submission** from **public distribution**. A publisher signs a news item offline, encrypts the signed item into an anonymity transport, and a release endpoint verifies it before inserting the public item into the fast peer network. Multiple independent release endpoints avoid a single news operator. A local Bluetooth courier would carry the encrypted submission rather than immediately exposing a readable signed article. This architecture is **not implemented or validated in 0.5.0**.
+Investigated 11 October 2026. A credible next architecture separates **anonymous encrypted submission** from **public distribution**. A publisher signs a news item offline, encrypts the signed item into an anonymity transport, and a release endpoint verifies it before inserting the public item into the fast peer network. Multiple independent release endpoints avoid a single news operator. A local Bluetooth courier would carry the encrypted submission rather than immediately exposing a readable signed article. This architecture is **not implemented or validated in the current APK**.
 
 - [Katzenpost specifications](https://katzenpost.network/docs/specs/mixnet/) and [operator guide](https://katzenpost.network/docs/admin_guide/) provide an existing mixnet implementation/protocol and local deployment path. Deploying all required relays, gateways and directory authorities on reachable domestic networks could avoid dependence on international routing. That is an engineering inference, conditional on real NIN reachability and independently operated infrastructure; no Iranian deployment or censorship-resilience test has been performed.
 - The [current Katzenpost project page](https://katzenpost.network/) lists thin clients in Go, Rust and Python and source-buildable client applications. It cautions that the threat model is evolving and must be read together with the newer Echomix paper. A Flutter/Android integration and an up-to-date threat assessment are separate engineering work; Katzenpost is not a dependency or routing path in this APK.
@@ -105,6 +105,28 @@ Investigated 11 October 2026. A credible next architecture separates **anonymous
 - [Strong Anonymity for Mesh Messaging](https://arxiv.org/abs/2207.04145) offers relevant offline research, but its security model allows identifying a ciphertext's transmitting origin while hiding whether it is real/dummy. Public-channel adversaries can read public news, so directly copying it would not establish anonymity for readable first-hop publications. The paper's large-network performance is modeled; its small Android proof of concept does not certify FarvaharTrends's GATT paths.
 
 A controlled mixnet test should isolate all international access, verify domestic bootstrap and relay reachability, measure fresh-message latency/battery, and assess colluding-relay and global-observer assumptions before making publisher-protection claims. No cryptographic scheme can restore missing physical connectivity or protect a compromised publisher device.
+
+The follow-up investigation on 14 October 2026 also considered
+[Dandelion++](https://arxiv.org/html/1805.11060) and
+[Moby](https://petsymposium.org/popets/2022/popets-2022-0071.pdf).
+Dandelion++ explicitly excludes ISP-level adversaries and does not stop targeted
+attacks; forwarding through a few random phones is not sufficient protection
+for the stated monitoring threat. Moby demonstrates a blackout-oriented Android
+research prototype with prior trust establishment, but excludes a global observer
+of its nearby network and does not hide participation. Neither result establishes
+anonymity for this app's readable public-channel gossip.
+
+A proposed protected-submission path would keep signed articles out of ordinary
+inventories until release after mixing. It must also cover channel announcements,
+owner/editor controls, images, retries and recovery from crashes; protecting text
+alone leaves correlated publishing actions exposed. Unavailable protected routes
+must leave submissions queued, never silently fall back to direct publication.
+Peer selection needs resistance to malicious identity multiplication, and the
+design must specify what timing, packet size and activity remain observable.
+These are research requirements, not implemented APK features. Operating the
+roles on phones does not conceal relay participation or establish enough
+independent operators, available traffic or reliable background service. Old
+publisher-to-connection observations cannot be erased by a protocol upgrade.
 
 FarvaharTrends is an experimental public-news transport pilot. It has no measured field performance, nationwide coverage claim, or anonymity guarantee. Use benign test messages and consenting volunteers. The reader interface has no Results tab; ordinary testers provide verbal feedback.
 
