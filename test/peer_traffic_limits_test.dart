@@ -405,7 +405,7 @@ void main() {
   );
 
   test(
-    'aggregate budgets bound repeated rejection and reconnect journal writes',
+    'aggregate budgets bound rejection logs and delivery resumes after reset',
     () async {
       final target = engine(window: const Duration(seconds: 30));
       final identities = [
@@ -472,7 +472,40 @@ void main() {
         events.where((e) => e['kind'] == 'connected').length,
         lessThanOrEqualTo(identities.length + 1),
       );
+
+      // The fifth peer suffered aggregate exhaustion, not its own violation.
+      // Once this fixture's window resets, it can reuse the same identity and
+      // deliver fresh news without restarting the engine or clearing its data.
+      await Future<void>.delayed(const Duration(seconds: 31));
+      final recovered = await connect(target, own: identities.last);
+      await until(
+        () async => recovered.frames.any((f) => f['type'] == 'inventory'),
+      );
+      final channel = SignedChannel.create(
+        identities.last,
+        name: 'آزمایش بازیابی پس از ازدحام',
+      );
+      final news = SignedBulletin.create(
+        identities.last,
+        channelId: channel.id,
+        runId: 'news',
+        sequence: 1,
+        text: 'خبر تازه پس از پایان محدودیت به خواننده می‌رسد.',
+      );
+      await recovered.send({'type': 'channel', 'value': channel.toJson()});
+      await recovered.send({'type': 'bulletin', 'value': news.toJson()});
+      await until(
+        () async => clients.first.frames.any(
+          (frame) =>
+              frame['type'] == 'bulletin' &&
+              (frame['value'] as Map)['id'] == news.id,
+        ),
+      );
+      expect((await target.snapshot())['bulletinCount'], 1);
+      expect((await target.snapshot())['coolingPeerCount'], 0);
+      expect(recovered.closed, isFalse);
     },
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 }
 

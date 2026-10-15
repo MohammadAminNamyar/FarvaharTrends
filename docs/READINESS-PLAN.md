@@ -105,6 +105,37 @@ at or below 256 items with 255 evictions, and the reopened journal was 380,293
 bytes. Socket writes are not counts of accepted or forwarded spam. These host
 results do not establish phone throughput, battery cost or nationwide capacity.
 
+The separate `test/continuous_spam_delivery_test.dart` keeps four signed-news
+senders active with one attempted post per second per sender and staggered
+transport-key changes. A legitimate writer sends every 15 seconds through the
+same relay to a real receiving engine. The receiver uses normal inventory
+reconciliation, without test-issued requests for the legitimate posts. Production
+one-minute traffic windows stay enabled. The default workload lasts two minutes;
+set `FT_CONTINUOUS_SPAM_SECONDS=600` for ten minutes. Assertions require delivery
+during each complete minute, no legitimate post waiting two minutes, bounded
+cache/journal sizes, continued offered traffic, and durable legitimate news after
+both stores reopen. The fixture replaces manually pinned transport identities;
+it does not exercise hostile automatic admission. This paced workload fills the
+cache but is below the global frame limit, so it does not establish fair delivery
+when attackers exhaust the shared ingress budget.
+
+The ten-minute run on 14 October 2026 passed: four senders wrote 2,074 signed
+spam frames across 36 transport-key changes, and all 40 legitimate posts reached
+the reader and survived reopening both stores. At least one legitimate post
+arrived in every minute of the workload. The largest observed delivery delay
+was 22,708 ms, measured using one host monotonic clock; this includes polling
+and host test overhead. The longest gap between any sender's successful socket
+writes was 12,457 ms, including reconnection work. The cache reached 256 posts
+and the largest sampled journal was 1,900,304 bytes. Socket writes still do not
+count accepted spam, and host loopback timing is not a phone/carrier benchmark.
+
+The aggregate-budget regression also passed its recovery extension: after four
+senders exhaust the shared frame allowance, an affected fifth peer reconnects
+with the same identity after the fixture's 30-second window resets and delivers
+new signed Persian news to another connected reader. No engine restart, cleared
+store or identity replacement is needed. This checks recovery after the load
+ends; it does not promise delivery while attackers repeatedly exhaust the budget.
+
 The append-failure regression obstructs the journal path only inside a disposable
 fixture. A failed publication cannot enter the in-memory news/outbox, subsequent
 writes remain blocked until recovery, committed posts survive reopening, and a
@@ -114,8 +145,9 @@ previously acknowledged posts and outbox records survived each restart. These
 checks cover filesystem errors and process termination, not a physically full
 phone or loss of power during flash writes.
 
-Still required: long-duration continuous signed spam and identity churn with
-honest traffic continuing; recovery after resource exhaustion; real low-space/crash
+Still required: longer and higher-rate signed spam, including global-budget
+exhaustion and hostile automatic admission while honest traffic continues;
+recovery after resource exhaustion; real low-space/crash
 tests; low-end Android CPU/memory/flash/radio measurements. The single global
 discovery topic and bounded all-channel gossip need a scalable routing design
 and benchmarks before mass rollout. Sharding must retain small-network and
@@ -188,3 +220,9 @@ one timeout in the existing UDP discovery test; its six-test file passed in
 isolation and the subsequent full run passed. This intermittent failure remains
 recorded rather than being counted as a clean first run. Overlay/native code
 was unchanged from the previously verified build.
+
+The subsequent continuous-load check passed at both two and ten minutes. All nine
+traffic-limit tests passed after extending the aggregate-budget recovery case,
+and static analysis passed. These targeted runs follow the 534-test full-suite
+run above; that earlier full run predates the new continuous-load test. Only tests
+and documentation changed, so the verified 0.8.11 application and APK are unchanged.

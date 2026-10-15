@@ -170,11 +170,30 @@ An optional Windows BLE helper lets a physical Android phone reach the local PC 
 
 Following, blocking and trust marks are private local preferences. The main feed shows followed, unblocked channels; other channels are available through Discover. Owned channels are followed unless blocked. Trust defaults to Not assessed; Trusted by you is a personal assessment, not a public vote or factual verification. Trust does not follow a channel; hiding clears both follow and trust. Unblocking someone else's channel does not restore either mark; an owned channel becomes automatically followed again, without restoring trust. These lists are never included in discovery, gossip, peer requests or diagnostic exports. The shared public cache may still carry other channels, so this is not a promise to download only followed content.
 
-Public metadata is limited to 128 channels and 16 per publisher. Local-owned metadata and sequence counters are protected within that limit. Unprotected foreign metadata rotates by local arrival activity with its dependent cached news, so a full foreign directory cannot permanently prevent local channel creation. The news cache retains at most 256 bulletins, 64 per channel and 96 per publisher. Within a full channel window, the highest signed sequence numbers are retained with deterministic ID tie-breaking; stale replays cannot displace newer items there. Publisher retention uses insertion order. At the global news bound, foreign items are evicted before local-authored news; the local outbox still obeys the per-channel and per-publisher limits. Local follow hints protect channel metadata only; bulletin quotas do not consult follow/trust preferences. There is no permanent replay history or unlimited archive. Sustained multiple-key attacks can still displace foreign public content or compete for automatic contacts.
+Public metadata is limited to 128 channels and 16 per publisher. Local-owned metadata and sequence counters are protected within that limit. Unprotected foreign metadata rotates by local arrival activity with its dependent cached news, so a full foreign directory cannot permanently prevent local channel creation. The news cache retains at most 256 bulletins, 64 per channel and 96 per publisher. Within a full channel window, the highest signed sequence numbers are retained with deterministic ID tie-breaking; stale replays cannot displace newer items there. Publisher retention uses insertion order.
+
+At the global news bound, foreign items are evicted before local-authored news and
+the local outbox; per-channel and per-publisher limits still apply. Locally
+followed or managed channels receive retention priority. When more than 64
+unfollowed foreign posts occupy the cache, one of those is evicted first;
+otherwise the largest followed foreign feed supplies the eviction candidate.
+This keeps room for relaying other public news, subject to local-outbox priority,
+and reduces displacement of quieter followed feeds. These local retention hints
+are not included in news envelopes or public journal records. Trust marks do not
+change these quotas. There is no permanent replay history or unlimited archive.
+Sustained multiple-key attacks can still displace foreign public content or
+compete for automatic contacts.
 
 ## Traffic abuse limits
 
 Each device enforces local elapsed-time budgets without broadcasting trust choices or accusations. Current experimental defaults per 60-second window are 1 MiB ingress and 600 frames per peer, 4 MiB/2,400 frames globally, 512 KiB egress per peer and 4 MiB globally, and 512 requested object IDs per peer/2,048 globally. Frames remain capped at 32 KiB. Repeated object responses are suppressed for 10 seconds with a bounded cache; budgets survive reconnects in the same engine session. Excess request/egress work is deferred to later inventory reconciliation, which can add delay under load. Ingress overrun can close a connection; global exhaustion alone does not mark an honest peer abusive.
+
+Global ingress budgets are shared, without a reserved allowance for each honest
+connection. Several admitted attackers can consume the global allowance and
+interrupt legitimate traffic until it resets. Cache-retention tests at a paced
+load do not demonstrate delivery under global-budget exhaustion. Such a result
+requires a separate adversarial workload and a reviewed scheduling/admission
+design; changing connection keys must not silently grant unlimited aggregate work.
 
 New channel admissions are limited to 4 attempts per automatic LAN-origin peer, 8 per other peer, and 32 globally per minute; excess metadata can be requested again later on the same TLS connection. Missing-channel news has at most four pending slots per peer, sixteen total, and expires after 45 seconds using a local monotonic clock. Incoming TLS work is limited before cryptographic processing to four concurrent handshakes, sixteen attempts per IPv4 source or IPv6 /64 and sixty-four globally per minute. This leaves room for outgoing connections during an incoming slow-handshake attack. Source-address budgets may also affect multiple legitimate devices behind one address. They do not prevent radio interference or saturation of the underlying network link.
 
