@@ -1,11 +1,15 @@
 /// The animated peer radar on the connection tab.
 library;
 
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
+import 'native_radar_motion.dart';
 
 class LiveRadar extends StatefulWidget {
   const LiveRadar({
@@ -24,26 +28,60 @@ class LiveRadar extends StatefulWidget {
   State<LiveRadar> createState() => _LiveRadarState();
 }
 
-class _LiveRadarState extends State<LiveRadar>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController motion = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 5),
-  );
+class _LiveRadarState extends State<LiveRadar> with WidgetsBindingObserver {
+  // This slow sweep needs only 30 paints per second, even on a 120 Hz phone.
+  // A timer avoids scheduling an otherwise idle Flutter frame at every vsync.
+  static const _frame = Duration(microseconds: 33333);
+  static const _cycleMicros = 5000000;
+  final motion = ValueNotifier<double>(0);
+  Timer? _timer;
+  bool _motionAllowed = false;
+  bool _visible = true;
+  bool _nativeFailed = false;
+  bool get _native =>
+      Platform.isAndroid &&
+      !_nativeFailed &&
+      const bool.fromEnvironment('FT_NATIVE_RADAR', defaultValue: true);
+  bool get _animate =>
+      widget.active && widget.animate && _motionAllowed && _visible;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final state = WidgetsBinding.instance.lifecycleState;
+    _visible = state == null || state == AppLifecycleState.resumed;
+  }
+
   void updateMotion() {
-    if (widget.active &&
-        widget.animate &&
-        !MediaQuery.disableAnimationsOf(context)) {
-      motion.repeat();
+    if (_animate && !_native) {
+      if (_timer != null) return;
+      final start = motion.value;
+      _timer = Timer.periodic(_frame, (timer) {
+        // tick includes missed intervals: delayed frames do not slow the sweep.
+        motion.value =
+            (start + timer.tick * _frame.inMicroseconds / _cycleMicros) % 1;
+      });
     } else {
-      motion.stop();
+      _timer?.cancel();
+      _timer = null;
     }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _motionAllowed =
+        TickerMode.valuesOf(context).enabled &&
+        !MediaQuery.disableAnimationsOf(context);
     updateMotion();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _visible = state == AppLifecycleState.resumed;
+    updateMotion();
+    if (_native && mounted) setState(() {});
   }
 
   @override
@@ -54,6 +92,8 @@ class _LiveRadarState extends State<LiveRadar>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
     motion.dispose();
     super.dispose();
   }
@@ -64,55 +104,77 @@ class _LiveRadarState extends State<LiveRadar>
     child: SizedBox(
       height: 160,
       width: double.infinity,
-      child: AnimatedBuilder(
-        animation: motion,
-        builder: (context, _) => CustomPaint(
-          painter: _RadarPainter(
-            progress: motion.value,
-            contacts: widget.contacts,
-            active: widget.active,
-            searching: widget.searching,
-          ),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.number,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 38,
-                    fontWeight: FontWeight.w800,
-                    height: 1.2,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_native)
+            LayoutBuilder(
+              builder: (context, constraints) => Center(
+                child: SizedBox.square(
+                  dimension: math.min(constraints.maxWidth * .45 / .44, 160),
+                  child: NativeRadarMotion(
+                    backgroundColor: inkColor,
+                    active: widget.active,
+                    searching: widget.searching,
+                    animate: _animate,
+                    onUnavailable: () {
+                      if (!mounted) return;
+                      setState(() => _nativeFailed = true);
+                      updateMotion();
+                    },
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.caption,
-                  style: const TextStyle(
-                    color: Color(0xFFB8D5DC),
-                    fontSize: 10,
-                  ),
-                ),
-              ],
+              ),
+            ),
+          RepaintBoundary(
+            child: CustomPaint(
+              painter: _RadarBackgroundPainter(contacts: widget.contacts),
             ),
           ),
-        ),
+          if (!_native)
+            RepaintBoundary(
+              child: CustomPaint(
+                painter: _RadarMotionPainter(
+                  progress: motion,
+                  active: widget.active,
+                  searching: widget.searching,
+                ),
+              ),
+            ),
+          Center(
+            child: Text(
+              widget.number,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 38,
+                fontWeight: FontWeight.w800,
+                height: 1.2,
+              ),
+            ),
+          ),
+          // Center the count itself on the crosshair; the caption must not
+          // shift it upward. Keep their gap when the text scale changes.
+          Positioned(
+            top: 80 + MediaQuery.textScalerOf(context).scale(38) * .6 + 4,
+            left: 0,
+            right: 0,
+            child: Text(
+              widget.caption,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFB8D5DC), fontSize: 10),
+            ),
+          ),
+        ],
       ),
     ),
   );
 }
 
-class _RadarPainter extends CustomPainter {
-  const _RadarPainter({
-    required this.progress,
-    required this.contacts,
-    required this.active,
-    required this.searching,
-  });
-  final double progress;
+// Static rings, peer dots and text stay outside the animated paint layer.
+// Animation ticks repaint the sweep directly; they never rebuild widgets.
+class _RadarBackgroundPainter extends CustomPainter {
+  const _RadarBackgroundPainter({required this.contacts});
   final int contacts;
-  final bool active, searching;
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
@@ -134,35 +196,6 @@ class _RadarPainter extends CustomPainter {
       Offset(center.dx, center.dy + radius),
       line,
     );
-    if (active) {
-      canvas.drawCircle(
-        center,
-        radius * (.3 + .7 * progress),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..color = tealColor.withValues(alpha: (1 - progress) * .4),
-      );
-      if (searching) {
-        final sweep = Paint()
-          ..shader = SweepGradient(
-            startAngle: 0,
-            endAngle: math.pi / 2,
-            colors: [
-              tealColor.withValues(alpha: 0),
-              tealColor.withValues(alpha: .22),
-            ],
-            transform: GradientRotation(progress * math.pi * 2),
-          ).createShader(Rect.fromCircle(center: center, radius: radius));
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          progress * math.pi * 2,
-          math.pi / 2,
-          true,
-          sweep,
-        );
-      }
-    }
     for (var i = 0; i < math.min(contacts, 6); i++) {
       final angle = i * 2.399 + .5;
       final r = radius * (.55 + (i % 3) * .15);
@@ -175,9 +208,56 @@ class _RadarPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _RadarPainter oldDelegate) =>
+  bool shouldRepaint(covariant _RadarBackgroundPainter oldDelegate) =>
+      contacts != oldDelegate.contacts;
+}
+
+class _RadarMotionPainter extends CustomPainter {
+  _RadarMotionPainter({
+    required this.progress,
+    required this.active,
+    required this.searching,
+  }) : super(repaint: progress);
+
+  final ValueListenable<double> progress;
+  final bool active, searching;
+  final _ring = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.5;
+  final _sweep = Paint();
+  double? _shaderRadius;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!active) return;
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width * .45, size.height * .44);
+    final phase = progress.value;
+    _ring.color = tealColor.withValues(alpha: (1 - phase) * .4);
+    canvas.drawCircle(center, radius * (.3 + .7 * phase), _ring);
+    if (!searching) return;
+    final bounds = Rect.fromCircle(center: Offset.zero, radius: radius);
+    if (_shaderRadius != radius) {
+      _shaderRadius = radius;
+      _sweep.shader = SweepGradient(
+        startAngle: 0,
+        endAngle: math.pi / 2,
+        colors: [
+          tealColor.withValues(alpha: 0),
+          tealColor.withValues(alpha: .22),
+        ],
+      ).createShader(bounds);
+    }
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(phase * math.pi * 2);
+    canvas.drawArc(bounds, 0, math.pi / 2, true, _sweep);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _RadarMotionPainter oldDelegate) =>
       progress != oldDelegate.progress ||
-      contacts != oldDelegate.contacts ||
       active != oldDelegate.active ||
       searching != oldDelegate.searching;
 }

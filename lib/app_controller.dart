@@ -485,11 +485,13 @@ void serviceMain(ServiceInstance service) async {
             },
             onState: (value) {
               overlayState = value;
-              unawaited(
-                engine!.snapshot().then(
-                  (v) => probe.record({...v, 'overlay': value}),
-                ),
-              );
+              if (DeviceProbe.enabled) {
+                unawaited(
+                  engine!.snapshot().then(
+                    (v) => probe.record({...v, 'overlay': value}),
+                  ),
+                );
+              }
               service.invoke('overlayStatus', value);
             },
           );

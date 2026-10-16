@@ -262,9 +262,26 @@ void main() {
       find.descendant(of: radar, matching: find.text('0')),
       findsOneWidget,
     );
+    final motion = tester
+        .widgetList<CustomPaint>(
+          find.descendant(of: radar, matching: find.byType(CustomPaint)),
+        )
+        .last
+        .painter!;
+    var repaints = 0;
+    void recordRepaint() => repaints++;
+    motion.addListener(recordRepaint);
+    addTearDown(() => motion.removeListener(recordRepaint));
     await tester.pump(const Duration(seconds: 1));
-    expect(tester.binding.hasScheduledFrame, isTrue);
+    // The optimized radar requests timed repaints instead of keeping a Flutter
+    // frame permanently scheduled. Verify motion rather than the old ticker.
+    expect(repaints, greaterThan(1));
+    expect(
+      find.descendant(of: radar, matching: find.text('0')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
+    motion.removeListener(recordRepaint);
     await tester.pumpWidget(const SizedBox());
   });
 

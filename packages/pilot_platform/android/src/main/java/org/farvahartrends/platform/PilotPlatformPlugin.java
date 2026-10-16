@@ -78,6 +78,8 @@ public final class PilotPlatformPlugin implements FlutterPlugin, ActivityAware,
     documents = new ChannelDocuments(context);
     channel = new MethodChannel(binding.getBinaryMessenger(), "farvahartrends/device");
     channel.setMethodCallHandler(this);
+    binding.getPlatformViewRegistry().registerViewFactory(
+        "farvahartrends/radar", new RadarPlatformView.Factory(binding.getBinaryMessenger()));
     INSTANCES.add(this);
     if (!lifecycleRegistered && context instanceof Application) {
       lifecycleRegistered = true;

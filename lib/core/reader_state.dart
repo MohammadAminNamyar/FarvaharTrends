@@ -91,20 +91,13 @@ class ReaderState {
             );
           }
           if (muted.length > 128) throw StateError('Too many muted channels.');
-          if (persist) {
+          final after = jsonEncode(_encode());
+          // Keep the lease and reload: the UI and receiver share this file.
+          // An unchanged observation needs no flush/rename cycle.
+          if (persist &&
+              (jsonEncode(before) != after || !await _file.exists())) {
             final pending = File('${_file.path}.next');
-            await pending.writeAsString(
-              jsonEncode({
-                'version': 1,
-                'initialized': initialized,
-                'notifications': notifications,
-                'images': images,
-                'read': readIds.toList(),
-                'seen': seenIds.toList(),
-                'muted': muted.toList(),
-              }),
-              flush: true,
-            );
+            await pending.writeAsString(after, flush: true);
             final backup = File('${_file.path}.bak');
             if (await backup.exists()) await backup.delete();
             if (await _file.exists()) await _file.rename(backup.path);

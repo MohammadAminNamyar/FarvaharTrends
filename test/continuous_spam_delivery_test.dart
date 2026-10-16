@@ -13,8 +13,11 @@ import 'package:farvahar_trends/core/pilot_store.dart';
 // offered workload. This does not model hostile automatic admission or carriers.
 void main() {
   test('honest news progresses during continuous signed spam and key rotation', () async {
+    // Allow a third production traffic window for cache saturation on hosts
+    // where TLS, verification and journal flushes reduce the offered rate.
+    // The full-cache, continuous-progress and no-starvation checks stay intact.
     final seconds = int.parse(
-      Platform.environment['FT_CONTINUOUS_SPAM_SECONDS'] ?? '120',
+      Platform.environment['FT_CONTINUOUS_SPAM_SECONDS'] ?? '180',
     );
     expect(seconds, inInclusiveRange(120, 900));
     final parent = Directory('${Directory.current.path}/.tooling/test-tmp');

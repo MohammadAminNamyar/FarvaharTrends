@@ -7,6 +7,8 @@ import 'channel_control.dart';
 import 'owner_authority.dart';
 import 'owner_authority_checkpoint.dart';
 import 'models.dart';
+import 'image_reference_index.dart';
+import 'media_store.dart';
 import 'peer_activity.dart';
 
 class ChannelCapacityException extends StateError {
@@ -138,6 +140,11 @@ class PilotStore {
   final Map<String, String> _bulletinPublishers = {};
   final Map<String, String> _bulletinChannels = {};
   final Map<String, int> _bulletinSequences = {};
+  final ImageReferenceIndex _imageReferences = ImageReferenceIndex();
+  (NewsImage, bool)? referencedImage(String hash) =>
+      _imageReferences.lookup(hash);
+  Iterable<String> get referencedImageHashes => _imageReferences.hashes;
+  Iterable<String> get localImageHashes => _imageReferences.localHashes;
   final List<Map<String, dynamic>> events = [];
   final Map<String, int> evictions = {
     'channels': 0,
@@ -578,6 +585,7 @@ class PilotStore {
                   ownerAuthority: authorityFor(channelId),
                 )) {
               bulletins.remove(id);
+              _imageReferences.remove(id);
               publications.remove(id);
               bulletinObservations.remove(id);
             }
@@ -607,6 +615,7 @@ class PilotStore {
         _indexBulletin(value);
         _touchChannel(_bulletinChannels[value['id']]);
         publications[value['id'] as String] = metadata;
+        _imageReferences.setLocal(value['id'] as String, true);
       case 'receipt':
         final value = _map(record['value']);
         final receipt = SignedReceipt.fromJson(value);
@@ -683,6 +692,7 @@ class PilotStore {
         ownerAuthority: effective,
       )) {
         bulletins.remove(id);
+        _imageReferences.remove(id);
         publications.remove(id);
         bulletinObservations.remove(id);
         _bulletinChannels.remove(id);
@@ -865,6 +875,10 @@ class PilotStore {
     _bulletinSequences
       ..clear()
       ..addAll(staged._bulletinSequences);
+    _imageReferences.replaceWith(staged._imageReferences);
+    for (final id in publications.keys) {
+      _imageReferences.setLocal(id, true);
+    }
     events
       ..clear()
       ..addAll(staged.events);
@@ -1054,6 +1068,11 @@ class PilotStore {
       _bulletinChannels[bulletin.id] =
           bulletin.channelId ?? 'legacy:${bulletin.sourceId}';
       _bulletinSequences[bulletin.id] = bulletin.sequence;
+      _imageReferences.put(
+        bulletin.id,
+        bulletin.image,
+        local: publications.containsKey(bulletin.id),
+      );
     } on FormatException {
       // Historical store-only records without a signed envelope still obey the
       // global bound; the engine never accepts them as news from a peer.
@@ -1139,6 +1158,7 @@ class PilotStore {
       }
       for (final id in ids.where((id) => !keep.contains(id))) {
         bulletins.remove(id);
+        _imageReferences.remove(id);
         evictions['bulletins'] = evictions['bulletins']! + 1;
       }
     }
@@ -1148,6 +1168,7 @@ class PilotStore {
       if (publisher == null) continue;
       if ((publisherCounts[publisher] ?? 0) >= maxBulletinsPerPublisher) {
         bulletins.remove(id);
+        _imageReferences.remove(id);
         evictions['bulletins'] = evictions['bulletins']! + 1;
       } else {
         publisherCounts[publisher] = (publisherCounts[publisher] ?? 0) + 1;
@@ -1247,6 +1268,7 @@ class PilotStore {
       for (final bulletinId in bulletins.keys.toList()) {
         if (_bulletinChannels[bulletinId] != id) continue;
         bulletins.remove(bulletinId);
+        _imageReferences.remove(bulletinId);
         bulletinObservations.remove(bulletinId);
         _bulletinPublishers.remove(bulletinId);
         _bulletinChannels.remove(bulletinId);
@@ -1268,6 +1290,8 @@ class PilotStore {
           ? _bulletinEvictionCandidate(map.keys)
           : map.keys.first;
       map.remove(id);
+      if (identical(map, bulletins)) _imageReferences.remove(id);
+      if (identical(map, publications)) _imageReferences.setLocal(id, false);
       evictions[counter] = evictions[counter]! + 1;
     }
   }

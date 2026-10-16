@@ -12,6 +12,8 @@ void main() {
     (TrafficResource.channels, 32, 2),
     (TrafficResource.policies, 128, 8),
     (TrafficResource.contacts, 64, 4),
+    (TrafficResource.envelopeDecryptions, 256, 16),
+    (TrafficResource.relayAdmissions, 64, 4),
   ]) {
     test(
       'seven busy links cannot consume the eighth $resource reservation',

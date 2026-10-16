@@ -150,6 +150,9 @@ void main() {
     final first = grant(owner, 1);
     final original = await backup(owner, first);
     await a.restoreChannelRecovery(original, password);
+    final beforeRecovery = ((await a.snapshot())['channels'] as List).single;
+    expect(beforeRecovery['owned'], true);
+    expect(beforeRecovery['canPublish'], true);
     await pair(a, b);
     await a.publishToChannel(channelId: channel.id, text: 'خبر قدیمی');
     await until(() async => (await texts(b)).contains('خبر قدیمی'));
@@ -158,6 +161,10 @@ void main() {
     await b.publishToChannel(channelId: channel.id, text: 'خبر با مالک تازه');
     await until(() async => (await texts(a)).contains('خبر با مالک تازه'));
     expect(await texts(a), isNot(contains('خبر قدیمی')));
+    final afterRecovery = ((await a.snapshot())['channels'] as List).single;
+    expect(afterRecovery['owned'], false);
+    expect(afterRecovery['canPublish'], false);
+    expect(afterRecovery['ownerGeneration'], 2);
     await expectLater(
       a.publishToChannel(channelId: channel.id, text: 'stolen-key post'),
       throwsStateError,

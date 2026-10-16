@@ -8,6 +8,8 @@ enum TrafficResource {
   channels,
   policies,
   contacts,
+  envelopeDecryptions,
+  relayAdmissions,
 }
 
 /// Fixed aggregate limits with a protected share for each live connection.

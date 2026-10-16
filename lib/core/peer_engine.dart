@@ -28,10 +28,14 @@ import 'peer_activity.dart';
 import 'peer_penalties.dart';
 import 'pilot_store.dart';
 import 'tcp_enrollment.dart';
+import 'envelope_crypto_worker.dart';
+import 'bounded_journal.dart';
 
 part 'channel_management.dart';
 part 'owner_channel_management.dart';
 part 'media_transfer.dart';
+part 'protected_publication.dart';
+part 'protected_runtime.dart';
 
 enum PeerTransport { ip, overlay, lan, wifiDirect, bluetooth }
 
@@ -80,6 +84,7 @@ class PeerEngine {
     this.outboundFrameTimeout = const Duration(seconds: 10),
     this.bluetoothFrameTimeout = const Duration(seconds: 30),
     this.nearbyDiscoveryInterval = const Duration(seconds: 10),
+    this.envelopeExperiment,
     Iterable<String> protectedChannelIds = const [],
   }) : assert(trafficWindow > Duration.zero),
        assert(cooldownDuration > Duration.zero),
@@ -102,6 +107,19 @@ class PeerEngine {
 
   final Directory directory;
   final ChannelKeyStore? channelKeys;
+
+  /// Section 9.2 laboratory experiment; null in production builds.
+  final EnvelopeExperiment? envelopeExperiment;
+  final Map<String, PendingPublication> _pendingPublications = {};
+  final Map<String, Map<String, dynamic>> _entryOrigins = {};
+  final Map<String, int> _entryLastForward = {};
+  final Map<String, int> _exitLastAttempt = {};
+  final Map<String, BoundedJournal> _protectedJournals = {};
+  EnvelopeCryptoWorker? _envelopeCrypto;
+  bool _protectedTickQueued = false;
+  Future<void> _protectedWork = Future.value();
+  Timer? _protectedTimer;
+  bool _protectedLoaded = false;
   String imageMode;
   late final MediaStore _media = MediaStore(directory);
   final Map<String, _ImageDownload> _imageDownloads = {};
@@ -232,6 +250,8 @@ class PeerEngine {
       TrafficResource.channels: newChannelsGlobal,
       TrafficResource.policies: 128,
       TrafficResource.contacts: helperContactAttemptsGlobal,
+      TrafficResource.envelopeDecryptions: 256,
+      TrafficResource.relayAdmissions: 64,
     },
   );
   final Map<String, _PeerTraffic> _peerTraffic = {};
@@ -1654,6 +1674,7 @@ class PeerEngine {
     await _load();
     if (_running && _activeMode == activeMode) return;
     if (_running) await _stopImpl();
+    await _loadProtectedState();
     _activeMode = activeMode;
     _lastError = null;
     _ownDiscoveryContact = null;
@@ -1755,6 +1776,7 @@ class PeerEngine {
       _retryTimer = Timer.periodic(const Duration(seconds: 2), (_) {
         unawaited(_dialDue());
       });
+      _startProtectedTimer();
       _inventoryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
         for (final link in _links.values.toList()) {
           unawaited(_sendInventory(link));
@@ -1779,6 +1801,8 @@ class PeerEngine {
     _generation++;
     _retryTimer?.cancel();
     _inventoryTimer?.cancel();
+    _protectedTimer?.cancel();
+    _protectedTimer = null;
     _retryTimer = null;
     _inventoryTimer = null;
     _discoveryStatusTimer?.cancel();
@@ -1818,6 +1842,12 @@ class PeerEngine {
       _drop(link, 'stopped');
     }
     await Future.wait(closingLinks.map((link) => link.processing));
+    await _protectedWork;
+    await _envelopeCrypto?.close();
+    _envelopeCrypto = null;
+    await Future.wait(
+      _protectedJournals.values.map((journal) => journal.flush()),
+    );
     _connecting.clear();
     _nativeRoutes.clear();
     _discoveryHints.clear();
@@ -2426,6 +2456,7 @@ class PeerEngine {
     }
     traffic.window.ingressBytes += bytes.length;
     _globalTraffic.ingressBytes += bytes.length;
+    envelopeExperiment?.count('applicationIngressBytes', bytes.length);
     for (final byte in bytes) {
       if (byte == 10) {
         final line = Uint8List.fromList(link.buffer);
@@ -2490,7 +2521,8 @@ class PeerEngine {
 
   Future<void> _handle(_Link link, Map<String, dynamic> frame) async {
     await _store.refreshAuthorityCheckpoint();
-    if (const {
+    if (!link.relayIngress &&
+        const {
           'channel',
           'channelPolicy',
           'ownerAuthority',
@@ -2521,6 +2553,12 @@ class PeerEngine {
             (frame['features'] as List).length <= 8 &&
             (frame['features'] as List).contains('owner-recovery-v1')) {
           link.ownerRecovery = true;
+        }
+        if (envelopeExperiment != null &&
+            frame['features'] is List &&
+            (frame['features'] as List).length <= 8 &&
+            (frame['features'] as List).contains(envelopeExperiment!.feature)) {
+          link.envelope = true;
         }
         if (link.ownerRecovery && !hadOwnerRecovery) await _sendInventory(link);
         final authorityIds = _ids(frame['authorities'] ?? <String>[], 32);
@@ -2741,11 +2779,15 @@ class PeerEngine {
           return;
         }
         if (inserted) {
+          envelopeExperiment?.onPublicAdmission?.call(channel.id);
           _syncChannels();
           _queueGossip([
             {'type': 'channel', 'value': channel.toJson()},
           ], except: link.peerId);
           _notify();
+          if (envelopeExperiment != null) {
+            unawaited(_protectedEchoed(channel.id));
+          }
         }
         _expirePendingBulletins();
         for (final pending in _pendingBulletins.values.toList()) {
@@ -2890,6 +2932,10 @@ class PeerEngine {
           }, except: link.peerId);
           _notify();
         }
+      case 'envelope' when envelopeExperiment != null:
+        await _handleEnvelope(link, frame);
+      case 'envelopeAck' when envelopeExperiment != null:
+        await _handleEnvelopeAck(link, frame);
       default:
         throw const FormatException('Unknown protocol frame');
     }
@@ -3071,6 +3117,7 @@ class PeerEngine {
     // A commit accepted before stopping remains durable. A replaced link or
     // new engine session must reconcile it rather than forward from old work.
     if (!_running || generation != _generation || link.closed) return;
+    envelopeExperiment?.onPublicAdmission?.call(bulletin.id);
     await _event(
       'bulletin_verified',
       peerId: link.peerId,
@@ -3098,6 +3145,11 @@ class PeerEngine {
           await _requestImages(candidate, [image.hash]);
         }
       }
+    }
+    // Laboratory bookkeeping runs after the ordinary path has queued its
+    // gossip, so it cannot shift this node's forwarding timing.
+    if (envelopeExperiment != null) {
+      unawaited(_protectedEchoed(bulletin.id));
     }
     if (receipt != null &&
         _running &&
@@ -3390,6 +3442,7 @@ class PeerEngine {
           : await _store.nextChannelSequence(channelId),
       channelId: channelId,
     );
+    envelopeExperiment?.onLocalPublication?.call(bulletin.id);
     final recipients = channelId == null
         ? (_peers.keys.where((id) => _origins[id] == 'manual').toList()..sort())
         : <String>[];
@@ -3517,7 +3570,12 @@ class PeerEngine {
         : (channelStart + channelPage.length) % channelIds.length;
     await _send(link, {
       'type': 'inventory',
-      'features': ['channel-v2', 'discovery-v1', 'owner-recovery-v1'],
+      'features': [
+        'channel-v2',
+        'discovery-v1',
+        'owner-recovery-v1',
+        if (envelopeExperiment != null) envelopeExperiment!.feature,
+      ],
       if (link.ownerRecovery)
         'authorities': channelPage
             .map(_store.authorityFor)
@@ -3591,6 +3649,11 @@ class PeerEngine {
   }
 
   void _discardPublisherObject(_Link link, String reason) {
+    if (link.relayIngress) {
+      _rejected++;
+      envelopeExperiment?.count('invalidRelayedObjects');
+      return;
+    }
     final traffic = _traffic(link.peerId);
     if (traffic.window.invalidObjects >= invalidPublisherObjectsPerWindow) {
       return;
@@ -3639,6 +3702,16 @@ class PeerEngine {
     Map<String, dynamic> frame, {
     bool requested = false,
   }) async {
+    if (link.relayIngress) {
+      // Dependencies go to real bounded links, never the entry's socket via
+      // this synthetic context. Ingress bytes were charged on their arrival.
+      if (frame['type'] == 'want') {
+        for (final candidate in _links.values.toList()) {
+          await _send(candidate, frame, requested: requested);
+        }
+      }
+      return false;
+    }
     if (!link.ownerRecovery) {
       if (frame['type'] == 'ownerAuthority') return false;
       if (frame['type'] == 'channel' &&
@@ -3681,6 +3754,10 @@ class PeerEngine {
       return false;
     }
     if (link.closed || !_running) return false;
+    if ((frame['type'] == 'envelope' || frame['type'] == 'envelopeAck') &&
+        !link.envelope) {
+      return false;
+    }
     String? channelId;
     if (frame['type'] == 'channel') {
       channelId = (frame['value'] as Map)['id'] as String;
@@ -3727,6 +3804,7 @@ class PeerEngine {
         while (offset < bytes.length && !link.closed && _running) {
           final written = link.socket.write(bytes, offset);
           if (written > 0) {
+            envelopeExperiment?.count('applicationEgressBytes', written);
             offset += written;
           } else {
             final ready = Completer<void>();
@@ -3903,6 +3981,19 @@ class PeerEngine {
   Future<Map<String, dynamic>> snapshot() async {
     await _load();
     await _store.refreshAuthorityCheckpoint();
+    final bulletins = _store.bulletins.values
+        .map(SignedBulletin.fromJson)
+        .toList();
+    final byChannel = <String, ({int count, int lastSequence})>{};
+    for (final bulletin in bulletins) {
+      final id = bulletin.channelId;
+      if (id == null) continue;
+      final previous = byChannel[id];
+      byChannel[id] = (
+        count: (previous?.count ?? 0) + 1,
+        lastSequence: max(previous?.lastSequence ?? 0, bulletin.sequence),
+      );
+    }
     return {
       'channelKeyManagement': channelKeys != null,
       'running': _running,
@@ -3965,8 +4056,13 @@ class PeerEngine {
       'coolingPeerCount': _penalties.coolingCount,
       'trafficLogSuppressedCount': _trafficLogSuppressed,
       'lastError': _lastError,
-      'bulletins': _store.bulletins.values.toList().reversed.map((raw) {
-        final bulletin = SignedBulletin.fromJson(raw);
+      if (envelopeExperiment != null)
+        'envelopeExperiment': {
+          ...envelopeExperiment!.stats,
+          'fetchedImages': List.of(envelopeExperiment!.fetchedImages),
+          'pending': pendingPublicationSummaries,
+        },
+      'bulletins': bulletins.reversed.map((bulletin) {
         return {
           'id': bulletin.id,
           'sourceId': bulletin.sourceId,
@@ -3991,12 +4087,10 @@ class PeerEngine {
         };
       }).toList(),
       'channels': _channels.values
-          .where((channel) => _store.policyFor(channel.id)?.deleted != true)
-          .map((channel) {
-            final bulletins = _store.bulletins.values
-                .map(SignedBulletin.fromJson)
-                .where((b) => b.channelId == channel.id)
-                .toList();
+          .map((channel) => _ChannelAccess(this, channel))
+          .where((access) => access.policy?.deleted != true)
+          .map((access) {
+            final channel = access.channel;
             return {
               'id': channel.id,
               'name': channel.name,
@@ -4005,34 +4099,31 @@ class PeerEngine {
               'recoverable': channel.recoverable,
               if (channel.recoverable) 'recoveryId': channel.recoveryId,
               if (channel.recoverable) ...{
-                'ownerGeneration': _store.authorityFor(channel.id)?.generation,
-                'ownerAuthorityState': _store.authorityFor(channel.id) == null
+                'ownerGeneration': access.authority?.generation,
+                'ownerAuthorityState': access.authority == null
                     ? 'unknown'
-                    : _store.authorityFor(channel.id)!.conflicted
+                    : access.authority!.conflicted
                     ? 'conflict'
                     : 'known',
               },
               'createdAtMs': channel.createdAtMs,
-              'owned': _isOwner(channel),
-              'canPublish': _canPublish(channel),
+              'owned': access.owned,
+              'canPublish': access.canPublish,
               'writerNickname':
                   channelKeys?.entries[channel.id]?['nickname'] ?? '',
-              'role': _isOwner(channel)
+              'role': access.owned
                   ? 'owner'
-                  : _canPublish(channel)
+                  : access.canPublish
                   ? 'editor'
                   : 'reader',
-              'editors': _editorSummary(channel.id),
-              'trust': _canPublish(channel)
+              'editors': access.editors,
+              'trust': access.canPublish
                   ? 'self'
                   : _origins[channel.ownerId] == 'manual'
                   ? 'paired'
                   : 'unverified',
-              'bulletinCount': bulletins.length,
-              'lastSequence': bulletins.fold<int>(
-                0,
-                (value, b) => max(value, b.sequence),
-              ),
+              'bulletinCount': byChannel[channel.id]?.count ?? 0,
+              'lastSequence': byChannel[channel.id]?.lastSequence ?? 0,
             };
           })
           .toList(),
@@ -4296,6 +4387,7 @@ class _Link {
     required this.connectedAtMs,
     required this.allowance,
     this.endpointKey,
+    this.relayIngress = false,
   });
   final RawSecureSocket socket;
   final String peerId;
@@ -4305,6 +4397,7 @@ class _Link {
   final String? endpointKey;
   final int connectedAtMs;
   final ConnectionAllowance allowance;
+  final bool relayIngress;
   StreamSubscription<RawSocketEvent>? subscription;
   Completer<void>? writeReady;
   final List<int> buffer = [];
@@ -4321,6 +4414,7 @@ class _Link {
   int pendingFrames = 0;
   bool modern = false;
   bool ownerRecovery = false;
+  bool envelope = false;
   bool closed = false;
 }
 

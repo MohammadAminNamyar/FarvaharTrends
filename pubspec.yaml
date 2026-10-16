@@ -1,7 +1,7 @@
 name: farvahar_trends
 description: "FarvaharTrends — a signed bulletin delivery pilot with no required central server."
 publish_to: 'none'
-version: 0.8.12+23
+version: 0.8.14+25
 
 environment:
   sdk: ^3.13.4
@@ -17,6 +17,7 @@ dependencies:
   basic_utils: 5.8.2
   pointycastle: 4.0.0
   crypto: 3.0.7
+  cryptography: 2.9.0
   flutter_pear:
     path: packages/flutter_pear
   pilot_platform:

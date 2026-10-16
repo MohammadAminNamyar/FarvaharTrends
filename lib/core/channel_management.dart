@@ -1,48 +1,52 @@
 part of 'peer_engine.dart';
 
-extension ChannelManagement on PeerEngine {
-  bool _isOwner(SignedChannel channel) {
-    final entry = channelKeys?.entries[channel.id];
+/// Reuses verified values only within one synchronous access calculation.
+/// Never retained across awaits or snapshots: revocation and recovery must be
+/// checked again against the latest store before the next operation.
+class _ChannelAccess {
+  _ChannelAccess(this.engine, this.channel);
+  final PeerEngine engine;
+  final SignedChannel channel;
+  late final policy = engine._store.policyFor(channel.id);
+  late final authority = engine._store.knownOwnerAuthority(channel);
+  late final entry = engine.channelKeys?.entries[channel.id];
+  late final grant = ChannelControl.parse(
+    Map<String, dynamic>.from(entry!['authorization'] as Map),
+    channel,
+  );
+  late final bool owned = _owned();
+  late final bool canPublish = _canPublish();
+
+  bool _owned() {
     if (channel.recoverable) {
       if (entry?['role'] != 'owner' || entry?['authorization'] is! Map) {
         return false;
       }
-      final grant = ChannelControl.parse(
-        Map<String, dynamic>.from(entry!['authorization'] as Map),
-        channel,
-      );
-      return _store.authorityFor(channel.id)?.allows(grant) == true;
+      return authority?.allows(grant) == true;
     }
-    return entry?['role'] == 'owner' || channel.ownedBy(publisherIdentity);
+    return entry?['role'] == 'owner' ||
+        channel.ownedBy(engine.publisherIdentity);
   }
 
-  bool _canPublish(SignedChannel channel) {
-    if (_store.policyFor(channel.id)?.deleted == true) return false;
-    if (channel.recoverable && _store.policyFor(channel.id) == null) {
-      return false;
-    }
-    if (_isOwner(channel)) return true;
-    final entry = channelKeys?.entries[channel.id];
+  bool _canPublish() {
+    if (policy?.deleted == true) return false;
+    if (channel.recoverable && policy == null) return false;
+    if (owned) return true;
     if (entry?['role'] != 'editor') return false;
-    final grant = ChannelControl.parse(
-      Map<String, dynamic>.from(entry!['authorization'] as Map),
-      channel,
-    );
-    final policy = _store.policyFor(channel.id);
+    final editorGrant = grant;
     if (channel.recoverable &&
-        (policy == null ||
-            _store.authorityFor(channel.id)?.allows(grant) != true)) {
+        (policy == null || authority?.allows(editorGrant) != true)) {
       return false;
     }
     return policy == null ||
-        (policy.signerId == grant.signerId &&
-            (policy.revision < grant.revision ||
-                policy.activeGrants.contains(grant.id)));
+        (policy!.signerId == editorGrant.signerId &&
+            (policy!.revision < editorGrant.revision ||
+                policy!.activeGrants.contains(editorGrant.id)));
   }
 
-  List<Map<String, dynamic>> _editorSummary(String id) {
-    final grants = channelKeys?.entries[id]?['grants'] as List? ?? [];
-    final active = _store.policyFor(id)?.activeGrants ?? [];
+  List<Map<String, dynamic>> get editors {
+    final grants = entry?['grants'] as List? ?? [];
+    final active = policy?.activeGrants ?? [];
     return active.map((grantId) {
       final raw = grants.where((v) => (v as Map)['id'] == grantId).firstOrNull;
       if (raw == null) {
@@ -55,18 +59,25 @@ extension ChannelManagement on PeerEngine {
       if (raw is Map && raw.length == 3 && raw['fingerprint'] is String) {
         return Map<String, dynamic>.from(raw);
       }
-      final grant = ChannelControl.parse(
+      final editor = ChannelControl.parse(
         Map<String, dynamic>.from(raw as Map),
-        _channels[id]!,
+        channel,
       );
       return <String, dynamic>{
-        'id': grant.id,
-        'label': grant.body['label'],
-        'fingerprint': grant.editorId,
+        'id': editor.id,
+        'label': editor.body['label'],
+        'fingerprint': editor.editorId,
       };
     }).toList();
   }
+}
 
+extension ChannelManagement on PeerEngine {
+  bool _isOwner(SignedChannel channel) => _ChannelAccess(this, channel).owned;
+  bool _canPublish(SignedChannel channel) =>
+      _ChannelAccess(this, channel).canPublish;
+  List<Map<String, dynamic>> _editorSummary(String id) =>
+      _ChannelAccess(this, _channels[id]!).editors;
   Future<(Identity, ChannelControl?)> _publishingCredentials(String id) async {
     await channelKeys?.load();
     final channel = _channels[id];

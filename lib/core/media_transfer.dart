@@ -10,12 +10,8 @@ class _ImageDownload {
 
 extension ImageTransfer on PeerEngine {
   Future<void> _pruneImages() async {
-    final referenced =
-        _store.bulletins.values
-            .map((v) => SignedBulletin.fromJson(v).image?.hash)
-            .whereType<String>()
-            .toSet()
-          ..addAll(_publishingImages);
+    final referenced = _store.referencedImageHashes.toSet()
+      ..addAll(_publishingImages);
     _imageDownloads.removeWhere((hash, _) => !referenced.contains(hash));
     await _media.retain(referenced);
   }
@@ -42,16 +38,7 @@ extension ImageTransfer on PeerEngine {
   }
 
   (NewsImage, bool)? _referencedImage(String hash) {
-    (NewsImage, bool)? received;
-    for (final entry in _store.bulletins.entries) {
-      final image = SignedBulletin.fromJson(entry.value).image;
-      if (image?.hash == hash) {
-        final local = _store.publications.containsKey(entry.key);
-        if (local) return (image!, true);
-        received ??= (image!, false);
-      }
-    }
-    return received;
+    return _store.referencedImage(hash);
   }
 
   Future<List<String>> _imageInventory(_Link link) async {
@@ -59,13 +46,7 @@ extension ImageTransfer on PeerEngine {
     if (await _imagesAllowed(link)) return _media.hashes;
     // Attaching a photo explicitly authorizes publishing it, independently of
     // automatic downloads. Received photos still follow the reader's policy.
-    final own = <String>{};
-    for (final id in _store.publications.keys) {
-      final raw = _store.bulletins[id];
-      if (raw == null) continue;
-      final hash = SignedBulletin.fromJson(raw).image?.hash;
-      if (hash != null) own.add(hash);
-    }
+    final own = _store.localImageHashes.toSet();
     return _media.hashes.where(own.contains).toList();
   }
 
@@ -94,7 +75,16 @@ extension ImageTransfer on PeerEngine {
           _clock.elapsedMilliseconds - v.started > 120000 ||
           !_links.containsKey(v.peerId),
     );
-    if (!await _imagesAllowed(link)) return;
+    void count(String key) {
+      final experiment = envelopeExperiment;
+      if (experiment == null) return;
+      experiment.stats[key] = (experiment.stats[key] ?? 0) + 1;
+    }
+
+    if (!await _imagesAllowed(link)) {
+      if (available.isNotEmpty) count('imageSkipNotAllowed');
+      return;
+    }
     if (!_running || link.closed || !identical(_links[link.peerId], link)) {
       return;
     }
@@ -102,14 +92,23 @@ extension ImageTransfer on PeerEngine {
       if (_imageDownloads.length >= 4 ||
           _imageDownloads.values.where((v) => v.peerId == link.peerId).length >=
               2) {
+        count('imageSkipBusy');
         break;
       }
       final image = _referencedImage(hash)?.$1;
-      if (image == null ||
-          _media.has(hash) ||
-          _imageDownloads.containsKey(hash)) {
+      if (image == null) {
+        count('imageSkipUnreferenced');
         continue;
       }
+      if (_media.has(hash)) {
+        count('imageSkipAlreadyHeld');
+        continue;
+      }
+      if (_imageDownloads.containsKey(hash)) {
+        count('imageSkipInFlight');
+        continue;
+      }
+      count('imageRequestsSent');
       _imageDownloads[hash] = _ImageDownload(
         image,
         link.peerId,
@@ -180,6 +179,14 @@ extension ImageTransfer on PeerEngine {
       if (pending.data.length == pending.image.bytes) {
         await _media.put(pending.image, pending.data.takeBytes());
         _imageDownloads.remove(hash);
+        if (envelopeExperiment case final experiment?) {
+          experiment.stats['imageFetchesCompleted'] =
+              experiment.stats['imageFetchesCompleted']! + 1;
+          if (experiment.fetchedImages.length >= 4096) {
+            experiment.fetchedImages.removeAt(0);
+          }
+          experiment.fetchedImages.add(hash);
+        }
         if (_referencedImage(hash) == null) {
           await _pruneImages();
           return;
